@@ -1,0 +1,39 @@
+[package]
+name = "grh"
+description = "One command to install, audit and remove the Green Harness parts"
+version = "0.1.0"
+license = "MIT"
+repository = "https://github.com/greenharness/grh"
+edition = "2021"
+# std::fs::File::lock (the receipt lock) is stable since 1.89.
+rust-version = "1.89"
+
+# Every dependency comes from crates.io, so `cargo install grh` works.
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+flate2 = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+tar = "0.4"
+toml = "0.8"
+ureq = { version = "2.12", default-features = false, features = ["tls"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[lints.clippy]
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
