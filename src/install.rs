@@ -305,6 +305,18 @@ impl Run<'_> {
             "repo"
         };
         let name = &part.name;
+        // Every machine-level integration is a Claude Code one (an MCP server,
+        // a hook, a plugin): without `claude` it cannot be placed or queried,
+        // and saying so beats reporting its state as unknown.
+        if level == Level::Machine && !self.claude {
+            self.sum.gap(
+                &format!("{name}: claude is not on PATH, so its Claude Code integration was not installed"),
+                &format!("install Claude Code, then grh install {name}"),
+            );
+            self.ui
+                .warn(&format!("{name}: claude not found, integration skipped"));
+            return Ok(());
+        }
         match owner::query(&integ.query, bin, repo) {
             Answer::Unknown => {
                 self.sum.gap(
@@ -353,15 +365,6 @@ impl Run<'_> {
                 Ok(())
             }
             Answer::Absent | Answer::Partial => {
-                if level == Level::Machine && !self.claude {
-                    self.sum.gap(
-                        &format!("{name}: claude is not on PATH, so its Claude Code integration was not installed"),
-                        &format!("install Claude Code, then grh install {name}"),
-                    );
-                    self.ui
-                        .warn(&format!("{name}: claude not found, integration skipped"));
-                    return Ok(());
-                }
                 self.store.remove_where(|e| {
                     same_scope(e, name, level, repo)
                         && matches!(e.kind, Kind::ToolInstall { .. } | Kind::ToolInstallAdopted)

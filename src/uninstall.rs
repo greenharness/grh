@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 
 use crate::catalog::{Catalog, Part, Unknown};
 use crate::exit::Exit;
+use crate::extension;
 use crate::fetch::sha256_hex;
 use crate::ops::{
     bin_for, confirm, git_root, is_integration, run_tool, text, worst_of, Consent, Summary, Ui,
@@ -48,7 +49,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         for n in &opts.names {
             if let Some(members) = cat.profiles.get(n) {
                 targets.extend(members.iter().cloned());
-            } else if cat.part(n).is_some() {
+            } else if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
                 targets.insert(n.clone());
             } else {
                 return Err(Exit::Usage(format!("unknown part or profile: {n}")));
@@ -67,6 +68,11 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         .rev()
         .filter(|planned| targets.contains(&planned.name))
         .collect();
+    let ext_todo: Vec<String> = targets
+        .iter()
+        .filter(|t| t.starts_with(extension::PREFIX) && held.contains(*t))
+        .cloned()
+        .collect();
     let (todo, absent): (Vec<&Part>, Vec<&Part>) = order.into_iter().partition(|planned| {
         before
             .entries
@@ -79,7 +85,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             planned.name
         ));
     }
-    if todo.is_empty() {
+    if todo.is_empty() && (ext_todo.is_empty() || only_repo.is_some()) {
         ui.say("nothing to uninstall");
         return Ok(());
     }
@@ -119,6 +125,12 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             planned.name
         ));
     }
+    for x in ext_todo.iter().filter(|_| only_repo.is_none()) {
+        let n = before.entries.iter().filter(|e| e.part == *x).count();
+        ui.say(&format!(
+            "  {x}: {n} recorded step(s), undone newest scope first"
+        ));
+    }
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
@@ -140,6 +152,12 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             part,
             only_repo.as_deref(),
         ));
+    }
+    if only_repo.is_none() {
+        for x in &ext_todo {
+            ui.say(x);
+            failures.extend(extension::remove(&ui, &mut store, x));
+        }
     }
     sum.print(&ui);
     match worst_of(failures) {

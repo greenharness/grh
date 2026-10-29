@@ -73,7 +73,7 @@ step "HOME is as it was, apart from grh and the tools' own state"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
               -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
-              -e '^\./\.cache/' || true)
+              -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
 if [ -n "$leftover" ]; then
     echo "left behind after uninstall:"
     printf '%s\n' "$leftover"

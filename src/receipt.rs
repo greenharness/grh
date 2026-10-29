@@ -53,6 +53,10 @@ pub enum Kind {
         path: String,
         from: String,
     },
+    /// An extension's `[[doctor]]` command, run by `grh status`.
+    Doctor {
+        command: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

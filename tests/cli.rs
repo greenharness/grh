@@ -79,8 +79,9 @@ impl Fx {
         let mut catalog = String::new();
         let skills = tarball(&[("skills/s1/SKILL.md", b"skill one\n")]);
         put(
-            &fx.root
-                .join("rel/greenharness/skills/releases/download/v0.1.0/skills-0.1.0.tar.gz"),
+            &fx.root.join(
+                "rel/greenharness/skills/releases/download/v0.1.0/greenharness-skills-0.1.0.tar.gz",
+            ),
             &skills,
         );
         catalog.push_str(&format!(

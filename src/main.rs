@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use grh::exit::Exit;
-use grh::{catalog, dispatch, install, status, uninstall};
+use grh::{audit, catalog, dispatch, extension, install, status, uninstall};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -95,8 +95,20 @@ fn main() -> ExitCode {
             extension,
             quiet,
         } => {
-            if extension.is_some() {
-                Err(Exit::Usage("--extension is not supported yet".into()))
+            if let Some(dir) = extension {
+                if !names.is_empty() {
+                    Err(Exit::Usage(
+                        "--extension installs one extension; name no parts with it".into(),
+                    ))
+                } else {
+                    extension::run(&extension::Opts {
+                        dir,
+                        replace,
+                        dry_run,
+                        yes,
+                        quiet,
+                    })
+                }
             } else {
                 catalog::Catalog::load().and_then(|cat| {
                     install::run(
@@ -141,7 +153,9 @@ fn main() -> ExitCode {
             };
             status::run(&cat, format)
         }),
-        Command::Audit { .. } => Err(Exit::Usage("not implemented yet".into())),
+        Command::Audit { dir, json } => {
+            catalog::Catalog::load().and_then(|cat| audit::run(&cat, dir.as_deref(), json))
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

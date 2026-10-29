@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::catalog::{Catalog, Integration, Part};
 use crate::dispatch;
 use crate::exit::Exit;
+use crate::extension;
 use crate::ops::{bin_for, git_root, mark, recorded_bin, same_scope, use_color, Mark};
 use crate::owner::{self, Answer};
 use crate::receipt::{self, Kind, Level};
@@ -109,8 +110,13 @@ pub fn run(cat: &Catalog, format: Format) -> Result<(), Exit> {
         .iter()
         .map(|p| part_json(p, &receipt, repo.as_deref()))
         .collect();
+    let doctors = extension::doctor_lines(&receipt.entries);
     if format == Format::Json {
-        let doc = json!({ "parts": parts, "bin_dir": dispatch::bin_dir() });
+        let doctor: Vec<Value> = doctors
+            .iter()
+            .map(|(part, command, line)| json!({ "part": part, "command": command, "first_line": line }))
+            .collect();
+        let doc = json!({ "parts": parts, "extensions": doctor, "bin_dir": dispatch::bin_dir() });
         println!(
             "{}",
             serde_json::to_string_pretty(&doc)
@@ -145,6 +151,9 @@ pub fn run(cat: &Catalog, format: Format) -> Result<(), Exit> {
             format!("  ({})", extra.join(", "))
         };
         println!("{m} {:<11} {word}{tail}", p["name"].as_str().unwrap_or(""));
+    }
+    for (part, _, line) in &doctors {
+        println!("  {part} doctor: {line}");
     }
     Ok(())
 }

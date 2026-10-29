@@ -40,13 +40,19 @@ pub struct Bundle {
 
 pub fn skills_url(base: &str, repo: &str, version: &str) -> String {
     format!(
-        "{}/{repo}/releases/download/v{version}/skills-{version}.tar.gz",
+        "{}/{repo}/releases/download/v{version}/greenharness-skills-{version}.tar.gz",
         base.trim_end_matches('/')
     )
 }
 
 impl Bundle {
-    /// Read a tarball whose `skills/` and `agents/` may sit under one wrapper dir.
+    /// A bundle of files by path relative to the config dir.
+    pub fn from_files(files: BTreeMap<String, Vec<u8>>) -> Bundle {
+        Bundle { files }
+    }
+
+    /// Read a tarball whose `skills/` and `agents/` dirs may sit under a wrapper
+    /// dir and `parts/<part>/` (the greenharness/skills release layout).
     pub fn from_tarball(bytes: &[u8]) -> Result<Bundle, Exit> {
         let mut files = BTreeMap::new();
         for (path, data, _) in read_tarball(bytes)? {
@@ -64,11 +70,7 @@ impl Bundle {
                     _ => None,
                 })
                 .collect();
-            let Some(at) = names
-                .iter()
-                .take(2)
-                .position(|n| n == "skills" || n == "agents")
-            else {
+            let Some(at) = names.iter().position(|n| n == "skills" || n == "agents") else {
                 continue;
             };
             if names.len() > at + 1 {
@@ -469,12 +471,36 @@ mod tests {
     }
 
     #[test]
+    fn the_release_layout_with_parts_is_read() {
+        // greenharness/skills ships `greenharness-skills-<v>/parts/<part>/…`.
+        let tgz = tarball(&[
+            (
+                "greenharness-skills-0.1.0/parts/gate/skills/tag/SKILL.md",
+                b"t",
+            ),
+            (
+                "greenharness-skills-0.1.0/parts/workflow/agents/rev.md",
+                b"r",
+            ),
+            ("greenharness-skills-0.1.0/README.md", b"ignored"),
+        ]);
+        let b = Bundle::from_tarball(&tgz).unwrap();
+        assert!(
+            b.files.contains_key("skills/tag/SKILL.md"),
+            "{:?}",
+            b.files.keys()
+        );
+        assert!(b.files.contains_key("agents/rev.md"));
+        assert_eq!(b.files.len(), 2);
+    }
+
+    #[test]
     fn a_pinned_tarball_is_fetched_from_a_local_base() {
         let tmp = tempfile::tempdir().unwrap();
         let tgz = tarball(&[("skills/alpha/SKILL.md", b"a")]);
         let d = tmp.path().join("o/skills/releases/download/v0.1.0");
         fs::create_dir_all(&d).unwrap();
-        fs::write(d.join("skills-0.1.0.tar.gz"), &tgz).unwrap();
+        fs::write(d.join("greenharness-skills-0.1.0.tar.gz"), &tgz).unwrap();
         let base = format!("file://{}", tmp.path().display());
         let b = Bundle::fetch_from(&base, "o/skills", "0.1.0", &sha256_hex(&tgz)).unwrap();
         assert!(b.files.contains_key("skills/alpha/SKILL.md"));
