@@ -1,0 +1,6 @@
+# The toolchain this repository builds with, pinned, as in aval: a floating
+# stable turns a merged commit red when clippy adds a lint. Bumping it is a
+# deliberate PR. Not the MSRV: that is `rust-version` in Cargo.toml.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

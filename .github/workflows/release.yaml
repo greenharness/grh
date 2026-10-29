@@ -1,0 +1,186 @@
+name: Release
+
+# A tag, prebuilt binaries for the five Unix targets, checksums and build
+# provenance. Copied from aval's release workflow and trimmed: grh is one
+# crate with no npm package, and Windows waits (`grh <part>` execs the part,
+# which Windows cannot, and Windows assets are .zip).
+#
+# Triggered by the TAG, never by a branch push. The tag is the decision.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (dry run: nothing is published)"
+        required: false
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # The tag and the manifest must agree BEFORE anything is built: a tag on a
+  # stale HEAD would publish the new version number from old code.
+  guard:
+    name: the tag says what the manifest says
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      dry_run: ${{ steps.v.outputs.dry_run }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          manifest=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "${{ github.ref_type }}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME#v}"
+            dry=false
+          else
+            tag="${{ inputs.tag }}"
+            tag="${tag#v}"
+            [ -n "$tag" ] || tag="$manifest"
+            dry=true
+          fi
+          echo "manifest=$manifest tag=$tag dry_run=$dry"
+          if [ "$manifest" != "$tag" ]; then
+            echo "::error::tag v$tag does not match Cargo.toml version $manifest."
+            exit 1
+          fi
+          if ! awk -v ver="v$manifest" '$1 == "##" && $2 == ver { found = 1 } END { exit !found }' CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## v$manifest' section."
+            exit 1
+          fi
+          echo "version=$manifest" >> "$GITHUB_OUTPUT"
+          echo "dry_run=$dry" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: ${{ matrix.target }}
+    needs: guard
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            packages: musl-tools
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+            packages: gcc-aarch64-linux-gnu
+            linker: aarch64-linux-gnu-gcc
+          - target: aarch64-apple-darwin
+            os: macos-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain for ${{ matrix.target }}
+        run: rustup target add ${{ matrix.target }}
+      - name: Install cross-compilation packages
+        if: matrix.packages != ''
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 install -y ${{ matrix.packages }}
+      - name: Point cargo at the cross linker
+        if: matrix.linker != ''
+        run: |
+          target_upper=$(echo "${{ matrix.target }}" | tr 'a-z-' 'A-Z_')
+          echo "CARGO_TARGET_${target_upper}_LINKER=${{ matrix.linker }}" >> "$GITHUB_ENV"
+      - run: cargo build --release --locked --target ${{ matrix.target }} --bin grh
+      - name: Archive
+        run: |
+          set -euo pipefail
+          name="grh-${{ needs.guard.outputs.version }}-${{ matrix.target }}"
+          mkdir -p "dist/$name"
+          cp README.md LICENSE "dist/$name/"
+          cp "target/${{ matrix.target }}/release/grh" "dist/$name/"
+          (cd dist && tar czf "$name.tar.gz" "$name")
+      # A release asset that cannot run is the one defect `cargo test` never
+      # sees, because tests never touch the packaged artifact.
+      - name: The packaged binary runs
+        if: matrix.target == 'x86_64-unknown-linux-gnu' || matrix.target == 'aarch64-apple-darwin'
+        run: |
+          set -euo pipefail
+          bin="dist/grh-${{ needs.guard.outputs.version }}-${{ matrix.target }}/grh"
+          "$bin" --help | grep -q 'install'
+          "$bin" --version | grep -q "${{ needs.guard.outputs.version }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: dist/*.tar.gz
+
+  publish:
+    name: publish the release
+    needs: [guard, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+      # grh is the binary that then fetches every other part, so who built it
+      # is recorded: `gh attestation verify <asset> --repo greenharness/grh`.
+      - uses: actions/attest-build-provenance@v2
+        if: needs.guard.outputs.dry_run == 'false'
+        with:
+          subject-path: dist/*.tar.gz
+      - name: Publish
+        if: needs.guard.outputs.dry_run == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "${GITHUB_REF_NAME}" > /dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" dist/* --clobber
+          else
+            notes=$(mktemp)
+            awk -v ver="${GITHUB_REF_NAME}" '
+              $1 == "##" && $2 == ver { grab = 1; next }
+              $1 == "##" && grab      { exit }
+              grab                    { print }
+            ' CHANGELOG.md > "$notes"
+            gh release create "${GITHUB_REF_NAME}" --title "${GITHUB_REF_NAME}" \
+              --notes-file "$notes" dist/*
+          fi
+      - name: Which channels are armed
+        run: |
+          {
+            echo "### Publication channels"
+            echo "| channel | armed | needs |"
+            echo "|---|---|---|"
+            echo "| GitHub release | yes | nothing |"
+            echo "| crates.io | ${{ vars.PUBLISH_CRATES == 'true' && 'yes' || 'NO' }} | \`PUBLISH_CRATES\` + \`CARGO_REGISTRY_TOKEN\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # `cargo install grh`. Armed only when the person sets the variable and the
+  # token: an unarmed channel says so in the summary above.
+  publish-crates:
+    name: publish to crates.io
+    needs: [guard, publish]
+    if: needs.guard.outputs.dry_run == 'false' && vars.PUBLISH_CRATES == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}

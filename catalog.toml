@@ -1,0 +1,147 @@
+# The parts grh knows, compiled into the binary (ADR-0050, harness.installer).
+#
+# Each part names its binary, the release it pins (version and the sha256 of
+# each target's tarball, copied from that release's SHA256SUMS by
+# `scripts/pin.sh`), the tool's own commands that place and remove its
+# integration, and the published query that says whether it is there. grh
+# never writes a tool's config itself: it runs these commands.
+#
+# `{bin}` is the absolute path of the part's binary. `query` names the parser
+# in src/owner.rs that reads that tool's answer as present / absent / partial
+# / unknown.
+
+skills_repo = "greenharness/skills"
+skills_version = "0.1.0"
+skills_sha256 = "bac11604caab818ec56dc35edc7717884e5a7fe27e4dfc1e49954b0337f9b094"
+
+[profiles]
+solo = ["gate", "guardrails"]
+team = ["gate", "guardrails", "decisions", "conform"]
+full = ["gate", "guardrails", "decisions", "conform", "router"]
+
+[[part]]
+name = "decisions"
+summary = "what is decided: architecture decision records, resolved"
+needs = []
+bin = "aval"
+repo = "fredericrous/aval"
+version = "1.12.0"
+skills = ["relais-architecture-conflict"]
+[part.sha256]
+aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
+x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
+aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
+x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
+[part.machine]
+install = ["{bin}", "mcp", "install", "--write"]
+uninstall = ["{bin}", "mcp", "uninstall", "--write"]
+query = "aval-mcp"
+[part.repo_level]
+install = ["{bin}", "hook", "install"]
+uninstall = ["{bin}", "hook", "uninstall", "--write"]
+query = "aval-hook"
+
+[[part]]
+name = "gate"
+summary = "what a commit or a push may carry: git hooks"
+needs = []
+bin = "amont"
+repo = "fredericrous/amont"
+version = "1.64.0"
+skills = ["relais-verified-push", "merge-when-green", "tag-release"]
+[part.sha256]
+aarch64-apple-darwin = "b8e943c18abc86340b9f22f355cb4259bfba20fbcebf42183c5d5fcd3b638e00"
+x86_64-apple-darwin = "d065f6f7d0df457d71b699fc49fc8bf7347616cb9c2460ae4cd193b97deeb7ca"
+aarch64-unknown-linux-gnu = "9a0393d45159dc8e4dd92e8ca467f3cc2fc6ec655101574642dc16e8a535b8b8"
+x86_64-unknown-linux-gnu = "bf5c07e7f68c99c27bcb5aef9a983a278fc1f5f911fb8840d2baac4662bcc07e"
+# `amont init`, never `amont install`: install copies the binary and fills
+# the machine's git template dir, machine state a repo step must not touch.
+[part.repo_level]
+install = ["{bin}", "init"]
+uninstall = ["{bin}", "uninstall", "--repo"]
+query = "amont-list"
+
+[[part]]
+name = "guardrails"
+summary = "what an agent's tool call may do: a Claude Code hook"
+needs = []
+bin = "amont-agent"
+repo = "fredericrous/amont-agent"
+version = "3.9.0"
+skills = []
+[part.sha256]
+aarch64-apple-darwin = "d8a8629aa032dc1fb4d7b88b5cdb1938deb85292dc0ee78238ea20503848d243"
+x86_64-apple-darwin = "8bc951b0da6952ee951abefeb1f59ae6034d2eebc540cca5e01994aa34d06c87"
+aarch64-unknown-linux-gnu = "29862782c8bdd1ce846d95e5e7921f380569ac84ea2cb870ef9b04f11de086ac"
+x86_64-unknown-linux-gnu = "2ea7389937aa38ad8fb2ae56b8d5ffb1e33bb9e81a17073d54ecdc6ef8ce276a"
+[part.machine]
+install = ["{bin}", "install", "--write"]
+uninstall = ["{bin}", "uninstall", "--write"]
+query = "amont-agent-doctor"
+
+[[part]]
+name = "router"
+summary = "which model runs a bounded task, verified and accounted"
+needs = []
+bin = "relais"
+repo = "fredericrous/relais"
+version = "0.36.0"
+skills = []
+[part.sha256]
+aarch64-apple-darwin = "5ef4a0b10680e317b6027a2643edd912f9c95f4162f32d9b847eb42e6c94794b"
+x86_64-apple-darwin = "b45fee24f93b3886fcc27766c33501a9ab17e46b17e56eed54bcd2dc5b7241ae"
+aarch64-unknown-linux-gnu = "af92c57101ffd85216383c951d00c7f1b9e84f5ef1b9b28803e1a8d825688b55"
+x86_64-unknown-linux-gnu = "c493ad55b43137f40c7797e88c73b94d6cb5950544ff9ad40e24e8752c1274f1"
+[part.machine]
+install = ["{bin}", "install", "--claude", "--user", "--write"]
+uninstall = ["{bin}", "uninstall", "--claude", "--user", "--write"]
+query = "relais-doctor"
+
+[[part]]
+name = "conform"
+summary = "which decided code rules a tree breaks, by lint"
+needs = ["decisions"]
+bin = "adr-lint"
+repo = "fredericrous/adr-lint"
+version = "0.10.0"
+skills = []
+# Repo level writes nothing: `adr-lint sync` rewrites lint configs the
+# repository owns, so grh prints the commands instead.
+hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
+[part.sha256]
+aarch64-apple-darwin = "b74785a59a2288ed93dc3422964ac0125ac2d6e0412756a6b318c600c8e831f2"
+x86_64-apple-darwin = "973420c1801ab80666617de6fe0b6df94fcf1e34c646a2d8513cce56639bd866"
+aarch64-unknown-linux-gnu = "b909f7d5fd47179f59e70654b7df8b8243f907e30b8e655f50788746c6db9093"
+x86_64-unknown-linux-gnu = "a945cda1cb28202717c1dd1b5adc0cb7f46405a5c6c6027ca1adc1c5a5ee13bf"
+
+[[part]]
+name = "attest"
+summary = "CI skips what your laptop already checked, on a signed tree"
+needs = ["gate"]
+skills = []
+# No binary on the machine: CI verifies, gate signs at pre-push.
+workflow = "attest"
+
+[[part]]
+name = "workflow"
+summary = "plans reviewed by a panel, one worktree per task, merge on green"
+needs = ["gate", "guardrails"]
+skills = [
+  "plan-review", "worktree-task", "worktree-sweep", "diagnosing-bugs", "retro",
+  "interface-review", "interface", "accessibility", "layout", "writing",
+  "motion-design",
+]
+agents = [
+  "implementation-review", "interface-review",
+  "plan-review-architect", "plan-review-backend", "plan-review-game-ux",
+  "plan-review-language", "plan-review-platform", "plan-review-po",
+  "plan-review-tui", "plan-review-unix", "plan-review-ux-research",
+]
+
+[[part]]
+name = "design"
+summary = "the Duro design system, themed by your tokens (extension)"
+needs = []
+skills = []
+# Installed from its published extension manifest; not published yet.
+extension = "unpublished"
