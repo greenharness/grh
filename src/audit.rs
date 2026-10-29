@@ -103,6 +103,7 @@ fn has_duro(root: &Path) -> bool {
         .any(|deps| deps.keys().any(|n| n.starts_with("@duro-app/")))
 }
 
+// holds-until: v0.1.1 folds `json_out` into status::Format, as status does.
 pub fn run(cat: &Catalog, dir: Option<&Path>, json_out: bool) -> Result<(), Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
     let root = git(given, &["rev-parse", "--show-toplevel"])

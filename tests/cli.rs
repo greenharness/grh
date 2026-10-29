@@ -632,6 +632,7 @@ fn the_gate_binary_is_kept_while_the_template_dir_bakes_it_and_removed_when_abse
     // A present answer whose shims cannot be read is unknown: kept.
     for raw in [
         r#"{"state":"present"}"#,
+        r#"{"state":"present","shims":[]}"#,
         r#"{"state":"present","shims":[{"binary":null}]}"#,
     ] {
         let o = fx.grh(
