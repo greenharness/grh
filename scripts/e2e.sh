@@ -97,7 +97,16 @@ cp "$GRH_BIN_DIR/amont" "$GRH_BIN_DIR/amont-agent" "$tools/"
 
 step "grh status --json is one JSON document"
 grh status --json > "$scratch/status.json"
-python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$scratch/status.json"
+# Every part with a binary reports it installed and placed by grh.
+python3 - "$scratch/status.json" <<'PY'
+import json, sys
+parts = json.load(open(sys.argv[1]))["parts"]
+want = {"decisions", "gate", "guardrails", "router", "conform"}
+bad = [p["name"] for p in parts if p["name"] in want and not (p["installed"] and p["source"] == "placed")]
+if bad:
+    sys.exit(f"not installed and placed: {bad}")
+print("every part installed and placed")
+PY
 
 step "a part answers through grh"
 grh decisions --version
@@ -130,7 +139,9 @@ leftover=$(comm -13 "$before" "$scratch/after.txt" \
               -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
 # amont-agent's own uninstall leaves the settings.json its install created,
-# emptied to `{}` (a follow-up for amont-agent). Allowed only while empty.
+# emptied to `{}`. Allowed only while empty.
+# holds-until: amont-agent's `uninstall --write` removes a settings.json it
+# created and left empty (follow-up after amont-agent 3.9.0).
 if [ "$(cat "$CLAUDE_CONFIG_DIR/settings.json" 2> /dev/null)" = "{}" ]; then
     leftover=$(printf '%s\n' "$leftover" | grep -v '^\./\.claude/settings\.json$' || true)
 fi

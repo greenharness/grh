@@ -43,7 +43,7 @@ case "$name:$*" in
   aval:"mcp uninstall --write") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.machine";;
   aval:"hook install") touch "$st.repo";;
   aval:"hook uninstall --write") rm -f "$st.repo";;
-  amont:"list --json") echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}}";;
+  amont:"list --json") tpl="{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}"; [ -n "$FAKE_TEMPLATE_RAW" ] && tpl=$FAKE_TEMPLATE_RAW; echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":$tpl}";;
   amont:init) touch "$st.repo";;
   amont:"uninstall --repo") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.repo";;
   amont-agent:"doctor --json") echo "{\"integration\":{\"state\":\"$(state machine)\"}}";;
@@ -629,6 +629,19 @@ fn the_gate_binary_is_kept_while_the_template_dir_bakes_it_and_removed_when_abse
     assert_eq!(fx.files("bin"), ["amont"]);
     assert!(err(&o).contains("kept"), "{}", err(&o));
     assert!(fx.receipt().contains("binary-placed"));
+    // A present answer whose shims cannot be read is unknown: kept.
+    for raw in [
+        r#"{"state":"present"}"#,
+        r#"{"state":"present","shims":[{"binary":null}]}"#,
+    ] {
+        let o = fx.grh(
+            "work",
+            &[("FAKE_TEMPLATE_RAW", raw)],
+            &["uninstall", "gate", "--yes"],
+        );
+        assert_eq!(code(&o), 0, "{}", err(&o));
+        assert_eq!(fx.files("bin"), ["amont"], "{raw}: {}", err(&o));
+    }
     // A failed query keeps it too.
     let o = fx.grh(
         "work",

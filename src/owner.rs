@@ -158,10 +158,18 @@ pub fn amont_template(bin: &Path, placed: &str) -> Template {
                         .ok()
                         .is_some_and(|c| std::fs::canonicalize(placed).ok().is_some_and(|p| p == c))
             };
-            let baked = dir["shims"]
-                .as_array()
-                .is_some_and(|a| a.iter().any(|s| s["binary"].as_str().is_some_and(same)));
-            if baked {
+            // Every shim must name its binary; anything less is an answer
+            // grh cannot read, and an unreadable answer never authorises a
+            // removal.
+            let Some(binaries) = dir["shims"].as_array().and_then(|shims| {
+                shims
+                    .iter()
+                    .map(|s| s["binary"].as_str())
+                    .collect::<Option<Vec<_>>>()
+            }) else {
+                return Template::Keep("amont's template directory state is unknown".into());
+            };
+            if binaries.into_iter().any(same) {
                 Template::Keep("amont's template directory shims bake it".into())
             } else {
                 Template::Gone

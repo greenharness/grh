@@ -71,15 +71,37 @@ impl Catalog {
                     path.to_string_lossy()
                 ))
             })?;
-            return toml::from_str(&text).map_err(|e| {
+            let catalog: Catalog = toml::from_str(&text).map_err(|e| {
                 Exit::Failed(format!(
                     "GRH_CATALOG {} is not a valid catalog: {e}",
                     path.to_string_lossy()
                 ))
-            });
+            })?;
+            return catalog.checked();
         }
         // Compiled in and checked by the tests below.
         toml::from_str(CATALOG).map_err(|e| Exit::Failed(format!("catalog.toml is invalid: {e}")))
+    }
+
+    /// Every `needs` and profile member names a part, so `resolve` can walk
+    /// them without a lookup that could fail.
+    fn checked(self) -> Result<Catalog, Exit> {
+        for part in &self.parts {
+            if let Some(need) = part.needs.iter().find(|n| self.part(n).is_none()) {
+                return Err(Exit::Failed(format!(
+                    "the catalog's {} needs unknown part {need}",
+                    part.name
+                )));
+            }
+        }
+        for (profile, members) in &self.profiles {
+            if let Some(member) = members.iter().find(|m| self.part(m).is_none()) {
+                return Err(Exit::Failed(format!(
+                    "the catalog's profile {profile} names unknown part {member}"
+                )));
+            }
+        }
+        Ok(self)
     }
 
     pub fn part(&self, name: &str) -> Option<&Part> {
