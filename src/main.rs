@@ -5,15 +5,8 @@ use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 
-// Read by install, uninstall and status as they land; the scaffold only
-// exposes the CLI surface.
-#[allow(dead_code)]
-mod catalog;
-mod dispatch;
-#[allow(dead_code)]
-mod exit;
-
-use exit::Exit;
+use grh::exit::Exit;
+use grh::{catalog, dispatch};
 
 #[derive(Debug, Parser)]
 #[command(
