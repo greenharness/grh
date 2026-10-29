@@ -394,6 +394,20 @@ fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, name: &str) -> V
                         continue;
                     }
                     Ok(cur) if sha256.is_empty() || sha256_hex(&cur) == *sha256 => {
+                        if name == "gate" {
+                            match owner::amont_template(p, path) {
+                                owner::Template::Keep(why) => {
+                                    sum.gap(
+                                        &format!("{path} kept: {why}"),
+                                        &format!("grh uninstall {name}, once `{path} list --json` reports template_dir absent"),
+                                    );
+                                    continue;
+                                }
+                                owner::Template::Gone => ui.warn(&format!(
+                                    "{path} is removed: repositories armed by hand with it fail their next commit until `amont init` re-arms them"
+                                )),
+                            }
+                        }
                         if let Err(x) = std::fs::remove_file(p) {
                             failures.push(fail(
                                 ui,

@@ -52,7 +52,7 @@ fn ask(bin: &Path, args: &[&str], cwd: Option<&Path>) -> Option<(i32, String)> {
     let mut out = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut text = String::new();
-        let _ = out.read_to_string(&mut text);
+        let _ = out.read_to_string(&mut text); // a partial read is still the answer; the exit code decides
         text
     });
     let deadline = Instant::now() + timeout();
@@ -63,9 +63,9 @@ fn ask(bin: &Path, args: &[&str], cwd: Option<&Path>) -> Option<(i32, String)> {
                 std::thread::sleep(Duration::from_millis(10));
             }
             _ => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = reader.join();
+                let _ = child.kill(); // already exited is fine; we are abandoning it
+                let _ = child.wait(); // reaping only; the query is already Unknown
+                let _ = reader.join(); // the text is discarded on a timeout
                 return None;
             }
         }
@@ -123,6 +123,52 @@ pub fn aval_hook(bin: &Path, repo: Option<&Path>) -> Answer {
 /// `<amont> list --json` in the repo: `installed.state`.
 pub fn amont_list(bin: &Path, repo: Option<&Path>) -> Answer {
     json_query(bin, &["list", "--json"], repo, &["installed", "state"])
+}
+
+/// What `<amont> list --json` says about the template directory a placed
+/// `amont` binary may be baked into.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Template {
+    /// Safe to remove the binary; repositories armed by hand with it will fail.
+    Gone,
+    /// Keep the binary, for this reason.
+    Keep(String),
+}
+
+/// `<amont> list --json`: `template_dir.state` and `template_dir.shims[].binary`.
+/// Anything but a clear answer keeps the binary.
+pub fn amont_template(bin: &Path, placed: &str) -> Template {
+    let Some((0, text)) = ask(bin, &["list", "--json"], None) else {
+        return Template::Keep("`amont list --json` failed".into());
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
+        return Template::Keep("`amont list --json` did not answer JSON".into());
+    };
+    let dir = &v["template_dir"];
+    match dir["state"]
+        .as_str()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("absent") => Template::Gone,
+        Some("present" | "partial") => {
+            let same = |b: &str| {
+                b == placed
+                    || std::fs::canonicalize(b)
+                        .ok()
+                        .is_some_and(|c| std::fs::canonicalize(placed).ok().is_some_and(|p| p == c))
+            };
+            let baked = dir["shims"]
+                .as_array()
+                .is_some_and(|a| a.iter().any(|s| s["binary"].as_str().is_some_and(same)));
+            if baked {
+                Template::Keep("amont's template directory shims bake it".into())
+            } else {
+                Template::Gone
+            }
+        }
+        _ => Template::Keep("amont's template directory state is unknown".into()),
+    }
 }
 
 /// `<amont-agent> doctor --json`: `integration.state`.

@@ -17,6 +17,14 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
 
+  deny:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
   msrv:
     # A `rust-version` nobody compiles against is a comment with syntax.
     runs-on: ubuntu-latest

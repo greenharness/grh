@@ -9,7 +9,7 @@ use std::process::{Command, Stdio};
 use crate::catalog::Part;
 use crate::exit::Exit;
 use crate::manifest::Manifest;
-use crate::ops::{confirm, on_path, run_tool, Consent, Ui};
+use crate::ops::{confirm, on_path, run_tool, Consent, Summary, Ui};
 use crate::receipt::{Entry, Kind, State, Store};
 use crate::skills::{self, Bundle};
 
@@ -119,6 +119,18 @@ fn mcp_argv(m: &crate::manifest::Mcp) -> (Vec<String>, Vec<String>) {
     (add, remove)
 }
 
+/// Does `claude mcp get <name>` find a server? Err when claude cannot run.
+fn mcp_exists(name: &str) -> Result<bool, String> {
+    Command::new("claude")
+        .args(["mcp", "get", name])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .map_err(|e| format!("cannot run claude: {e}"))
+}
+
 /// The SessionStart block for `[[session_context]]`, printed, never written.
 fn session_block(m: &Manifest) -> serde_json::Value {
     let hooks: Vec<_> = m
@@ -152,6 +164,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
     }
     let mut store = Store::open()?;
     let mut failures: Vec<Exit> = Vec::new();
+    let mut sum = Summary::default();
 
     if !part.skills.is_empty() || !part.agents.is_empty() {
         let claude = skills::claude_dir()?;
@@ -186,6 +199,38 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
             failures.push(e);
             continue;
         }
+        match mcp_exists(&mcp.name) {
+            Ok(true) => {
+                // A server by that name that grh has no done entry for is not
+                // grh's: leave it, record nothing, and never undo it.
+                let pending = store.receipt.entries.iter().position(|e| {
+                    e.part == name
+                        && e.state == State::Pending
+                        && matches!(&e.kind, Kind::ToolInstall { argv: a, .. } if *a == argv)
+                });
+                if let Some(idx) = pending {
+                    store.done(idx)?;
+                    ui.ok(&format!("{name}: mcp {} registered (recovered)", mcp.name));
+                } else {
+                    ui.warn(&format!(
+                        "{name}: mcp {} already exists, adopted and left alone",
+                        mcp.name
+                    ));
+                    sum.skip(
+                        &format!("mcp {} already exists and is not grh's", mcp.name),
+                        "leave it, or claude mcp remove it and grh install --extension again",
+                    );
+                }
+                continue;
+            }
+            Ok(false) => {}
+            Err(msg) => {
+                let e = Exit::Failed(msg);
+                ui.fail(&format!("{name}: {}", crate::ops::text(&e)));
+                failures.push(e);
+                continue;
+            }
+        }
         store.remove_where(|e| {
             e.part == name && matches!(&e.kind, Kind::ToolInstall { argv: a, .. } if *a == argv)
         })?;
@@ -202,11 +247,16 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
                 ui.ok(&format!("{name}: mcp {} registered", mcp.name));
             }
             Ok(code) => {
+                // The add did not happen: drop its pending step.
+                store.receipt.entries.remove(idx);
+                store.save()?;
                 let e = Exit::Failed(format!("{} exited {code}", argv.join(" ")));
                 ui.fail(&format!("{name}: {}", crate::ops::text(&e)));
                 failures.push(e);
             }
             Err(msg) => {
+                store.receipt.entries.remove(idx);
+                store.save()?;
                 let e = Exit::Failed(msg);
                 ui.fail(&format!("{name}: {}", crate::ops::text(&e)));
                 failures.push(e);
@@ -230,16 +280,23 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
     }
 
     if !m.session_context.is_empty() {
-        println!("Add this to the \"hooks\" of settings.json (grh did not write it):");
-        println!(
-            "{}",
-            serde_json::to_string_pretty(&session_block(&m))
-                .map_err(|e| Exit::Failed(format!("cannot encode the session block: {e}")))?
+        let block = serde_json::to_string_pretty(&session_block(&m))
+            .map_err(|e| Exit::Failed(format!("cannot encode the session block: {e}")))?;
+        ui.say("Add this to the \"hooks\" of settings.json (grh did not write it):");
+        ui.say(&block);
+        sum.gap(
+            &format!("{name}: the session block was not written to settings.json"),
+            &format!("add this to the \"hooks\" of settings.json: {block}"),
         );
     }
     if let Some(line) = m.conform.as_ref().and_then(|c| c.eslint.as_ref()) {
-        println!("conform eslint: {line}");
+        ui.say(&format!("conform eslint: {line}"));
+        sum.gap(
+            &format!("{name}: the conform eslint line was not added"),
+            &format!("add to your eslint config: {line}"),
+        );
     }
+    sum.print(&ui);
     match crate::ops::worst_of(failures) {
         None => Ok(()),
         Some(e) => Err(e),
@@ -258,11 +315,18 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
         .collect();
     for e in &entries {
         let outcome = match &e.kind {
-            Kind::ToolInstall { undo_argv, .. } => match run_tool(ui, undo_argv, None) {
-                Ok(0) => Ok(()),
-                Ok(code) => Err(format!("{} exited {code}; entry kept", undo_argv.join(" "))),
-                Err(m) => Err(format!("{m}; entry kept")),
-            },
+            Kind::ToolInstall { undo_argv, .. } => {
+                let ran = run_tool(ui, undo_argv, None);
+                // The entry goes only when claude reports the server gone.
+                match (ran, undo_argv.last().map(|n| mcp_exists(n))) {
+                    (_, Some(Ok(false))) => Ok(()),
+                    (Ok(code), _) => Err(format!(
+                        "{} exited {code} and the server is not confirmed gone; entry kept",
+                        undo_argv.join(" ")
+                    )),
+                    (Err(m), _) => Err(format!("{m}; entry kept")),
+                }
+            }
             Kind::Doctor { .. } => Ok(()),
             _ => continue,
         };

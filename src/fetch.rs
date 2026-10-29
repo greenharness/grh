@@ -291,7 +291,7 @@ mod tests {
         let h = std::thread::spawn(move || {
             let (mut s, _) = listener.accept().unwrap();
             let mut buf = [0u8; 1024];
-            let _ = s.read(&mut buf);
+            let _ = s.read(&mut buf); // the request bytes are not inspected by this test server
             let head = format!(
                 "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
                 b2.len()

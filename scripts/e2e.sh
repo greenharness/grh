@@ -22,7 +22,38 @@ export CLAUDE_CONFIG_DIR="$HOME/.claude"
 export RELAIS_STATE_DIR="$HOME/.local/state/relais" RELAIS_CONFIG_DIR="$HOME/.config/relais"
 export GRH_BIN_DIR="$HOME/.local/bin"
 mkdir -p "$HOME" "$GRH_BIN_DIR"
-export PATH="$GRH_BIN_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# A fake `claude`: records every mcp and plugin call, and answers `mcp get`
+# from a state file, so the Claude Code integrations really install and undo.
+fake="$scratch/fake"
+export CLAUDE_FAKE_LOG="$scratch/claude.log" CLAUDE_FAKE_STATE="$scratch/claude-state"
+mkdir -p "$fake" "$CLAUDE_FAKE_STATE"
+: > "$CLAUDE_FAKE_LOG"
+cat > "$fake/claude" <<'FAKE'
+#!/bin/sh
+echo "$*" >> "$CLAUDE_FAKE_LOG"
+group=${1:-}
+action=${2:-}
+[ "$#" -ge 2 ] && shift 2 || shift "$#"
+# The server name is the first argument that is not an option or its value.
+name=
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --scope|-s|--transport|-t|--env|-e|--header|-H) shift 2 || break ;;
+        --) break ;;
+        -*) shift ;;
+        *) name=$1; break ;;
+    esac
+done
+case "$group $action" in
+    "mcp add") touch "$CLAUDE_FAKE_STATE/mcp.$name" ;;
+    "mcp remove") rm -f "$CLAUDE_FAKE_STATE/mcp.$name" ;;
+    "mcp get") [ -f "$CLAUDE_FAKE_STATE/mcp.$name" ] || exit 1 ;;
+esac
+exit 0
+FAKE
+chmod +x "$fake/claude"
+export PATH="$GRH_BIN_DIR:$fake:/usr/bin:/bin:/usr/sbin:/sbin"
 git config --global user.email e2e@example.invalid
 git config --global user.name e2e
 
@@ -58,6 +89,12 @@ git init -q "$repo"
 (cd "$repo" && git commit -q --allow-empty -m "chore: seed")
 (cd "$repo" && grh install full workflow --repo --yes)
 
+grep -q '^mcp add' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp add was recorded"; exit 1; }
+# Keep the parts' binaries for the adopted cases below.
+tools="$scratch/tools"
+mkdir -p "$tools"
+cp "$GRH_BIN_DIR/amont" "$GRH_BIN_DIR/amont-agent" "$tools/"
+
 step "grh status --json is one JSON document"
 grh status --json > "$scratch/status.json"
 python3 -c "import json,sys; json.load(open(sys.argv[1]))" "$scratch/status.json"
@@ -68,15 +105,59 @@ grh decisions --version
 step "grh uninstall, bare, as the site prints it"
 (cd "$repo" && grh uninstall --yes)
 
+step "the fixture repository is disarmed"
+shims=$(find "$repo/.git/hooks" -type f ! -name '*.sample' 2> /dev/null || true)
+if [ -n "$shims" ]; then
+    echo "amont shims left in the fixture repository:"
+    printf '%s\n' "$shims"
+    exit 1
+fi
+if [ -e "$repo/.claude/hooks/aval-heads.sh" ]; then
+    echo "aval-heads.sh left in the fixture repository"
+    exit 1
+fi
+if ls "$CLAUDE_FAKE_STATE"/mcp.* > /dev/null 2>&1; then
+    echo "mcp servers left registered:"
+    ls "$CLAUDE_FAKE_STATE"
+    exit 1
+fi
+grep -q '^mcp remove' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp remove was recorded"; exit 1; }
+
 step "HOME is as it was, apart from grh and the tools' own state"
 (cd "$HOME" && find . -type f | sort) > "$scratch/after.txt"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
               -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
+# amont-agent's own uninstall leaves the settings.json its install created,
+# emptied to `{}` (a follow-up for amont-agent). Allowed only while empty.
+if [ "$(cat "$CLAUDE_CONFIG_DIR/settings.json" 2> /dev/null)" = "{}" ]; then
+    leftover=$(printf '%s\n' "$leftover" | grep -v '^\./\.claude/settings\.json$' || true)
+fi
 if [ -n "$leftover" ]; then
     echo "left behind after uninstall:"
     printf '%s\n' "$leftover"
     exit 1
 fi
 echo "nothing left behind"
+
+step "an integration that was there first survives uninstall"
+"$tools/amont-agent" install --write
+grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "amont-agent wrote no hook entry"; exit 1; }
+grh install guardrails --yes
+grh uninstall --yes
+grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
+"$tools/amont-agent" uninstall --write
+
+step "a binary that was there first survives uninstall"
+other="$scratch/other"
+mkdir -p "$other"
+ln -s "$tools/amont" "$other/amont"
+PATH="$other:$PATH" grh install gate --yes
+if [ -e "$GRH_BIN_DIR/amont" ]; then
+    echo "grh placed an amont although one was on PATH"
+    exit 1
+fi
+PATH="$other:$PATH" grh uninstall --yes
+[ -L "$other/amont" ] || { echo "uninstall removed the adopted amont"; exit 1; }
+echo "adopted integration and binary left alone"

@@ -10,6 +10,19 @@ use grh::fetch::{sha256_hex, target};
 
 /// A tool that logs its argv and keeps its integration state in files under
 /// `$FAKE_STATE`: `<name>.machine` and `<name>.repo` exist when present.
+/// A `claude` that logs its argv and keeps MCP servers as files under
+/// `$FAKE_STATE`: `mcp.<name>` exists while the server is registered.
+const FAKE_CLAUDE: &str = r#"#!/bin/sh
+echo "claude $*" >> "$FAKE_LOG"
+mkdir -p "$FAKE_STATE"
+case "$1 $2" in
+  "mcp add") [ -n "$FAKE_ADD_FAIL" ] && exit 1; touch "$FAKE_STATE/mcp.$5";;
+  "mcp remove") [ -n "$FAKE_REMOVE_STICKY" ] || rm -f "$FAKE_STATE/mcp.$5";;
+  "mcp get") [ -f "$FAKE_STATE/mcp.$3" ] && exit 0; exit 1;;
+esac
+exit 0
+"#;
+
 const FAKE: &str = r#"#!/bin/sh
 name=$(basename "$0")
 echo "$name $*" >> "$FAKE_LOG"
@@ -18,7 +31,10 @@ mkdir -p "$FAKE_STATE"
 if [ "$FAKE_UNKNOWN" = "$name" ]; then
   case "$*" in doctor*|list*|*--check*) exit 7;; esac
 fi
-state() { if [ -f "$st.$1" ]; then echo present; else echo absent; fi; }
+state() { if [ -f "$st.$1" ]; then echo present; elif [ -f "$st.partial" ]; then echo partial; else echo absent; fi; }
+if [ "$FAKE_FAIL_UNINSTALL" = "$name" ]; then
+  case "$*" in uninstall*) exit 3;; esac
+fi
 case "$name:$*" in
   *:--version) echo "$name 1.0.0";;
   aval:"mcp install --check") [ -f "$st.machine" ] && exit 0; exit 1;;
@@ -27,7 +43,7 @@ case "$name:$*" in
   aval:"mcp uninstall --write") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.machine";;
   aval:"hook install") touch "$st.repo";;
   aval:"hook uninstall --write") rm -f "$st.repo";;
-  amont:"list --json") echo "{\"installed\":{\"state\":\"$(state repo)\"}}";;
+  amont:"list --json") echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}}";;
   amont:init) touch "$st.repo";;
   amont:"uninstall --repo") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.repo";;
   amont-agent:"doctor --json") echo "{\"integration\":{\"state\":\"$(state machine)\"}}";;
@@ -73,7 +89,7 @@ impl Fx {
         for d in ["home", "state", "claude", "bin", "fakes", "fstate", "work"] {
             fs::create_dir_all(fx.root.join(d)).unwrap();
         }
-        executable(&fx.root.join("fakes/claude"), "#!/bin/sh\nexit 0\n");
+        executable(&fx.root.join("fakes/claude"), FAKE_CLAUDE);
         // Release fixtures and a catalog that pins them.
         let t = target().unwrap();
         let mut catalog = String::new();
@@ -515,4 +531,202 @@ fn a_bad_catalog_override_fails_with_exit_1_not_a_panic() {
     assert_eq!(code(&output), 1, "{}", err(&output));
     assert!(err(&output).contains("GRH_CATALOG"), "{}", err(&output));
     assert!(!err(&output).contains("panicked"), "{}", err(&output));
+}
+
+const ATTEST_BYTES: &str = "\
+name: attest
+on:
+  pull_request:
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fredericrous/attest@v1
+";
+
+fn extension_dir(fx: &Fx) -> String {
+    put(
+        &fx.p("ext/greenharness.toml"),
+        b"[extension]\nname = \"x\"\nversion = \"1.0.0\"\n\n[[mcp]]\nname = \"srv\"\ncommand = \"srvbin\"\n",
+    );
+    fx.p("ext").to_string_lossy().into_owned()
+}
+
+#[test]
+fn a_partial_query_with_no_grh_entry_records_nothing_and_runs_no_install() {
+    let fx = Fx::new();
+    fs::write(fx.p("fstate/amont-agent.partial"), "").unwrap();
+    let o = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.log().contains("install --write"), "{}", fx.log());
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    assert!(err(&o).contains("partly installed"), "{}", err(&o));
+}
+
+#[test]
+fn an_existing_mcp_server_is_skipped_and_survives_uninstall() {
+    let fx = Fx::new();
+    fs::write(fx.p("fstate/mcp.srv"), "").unwrap();
+    let dir = extension_dir(&fx);
+    let o = fx.grh("work", &[], &["install", "--extension", &dir, "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.log().contains("mcp add"), "{}", fx.log());
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.log().contains("mcp remove"), "{}", fx.log());
+    assert!(fx.p("fstate/mcp.srv").exists());
+}
+
+#[test]
+fn a_failed_mcp_add_leaves_no_entry() {
+    let fx = Fx::new();
+    let dir = extension_dir(&fx);
+    let o = fx.grh(
+        "work",
+        &[("FAKE_ADD_FAIL", "1")],
+        &["install", "--extension", &dir, "--yes"],
+    );
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.log().contains("mcp remove"), "{}", fx.log());
+}
+
+#[test]
+fn an_mcp_server_grh_added_is_removed_only_when_claude_reports_it_gone() {
+    let fx = Fx::new();
+    let dir = extension_dir(&fx);
+    let o = fx.grh("work", &[], &["install", "--extension", &dir, "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.p("fstate/mcp.srv").exists());
+    let o = fx.grh(
+        "work",
+        &[("FAKE_REMOVE_STICKY", "1")],
+        &["uninstall", "--yes"],
+    );
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.p("fstate/mcp.srv").exists());
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+}
+
+#[test]
+fn the_gate_binary_is_kept_while_the_template_dir_bakes_it_and_removed_when_absent() {
+    let fx = Fx::new();
+    assert_eq!(code(&fx.grh("work", &[], &["install", "gate", "--yes"])), 0);
+    let bin = fx.p("bin/amont").to_string_lossy().into_owned();
+    let o = fx.grh(
+        "work",
+        &[("FAKE_TEMPLATE", "present"), ("FAKE_TEMPLATE_BIN", &bin)],
+        &["uninstall", "gate", "--yes"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fx.files("bin"), ["amont"]);
+    assert!(err(&o).contains("kept"), "{}", err(&o));
+    assert!(fx.receipt().contains("binary-placed"));
+    // A failed query keeps it too.
+    let o = fx.grh(
+        "work",
+        &[("FAKE_UNKNOWN", "amont")],
+        &["uninstall", "gate", "--yes"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fx.files("bin"), ["amont"]);
+    // Absent: removed, with the warning.
+    let o = fx.grh("work", &[], &["uninstall", "gate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.files("bin").is_empty());
+    assert!(err(&o).contains("amont init"), "{}", err(&o));
+}
+
+#[test]
+fn an_existing_attest_workflow_with_identical_bytes_is_not_ours_to_remove() {
+    let fx = Fx::new();
+    git_init(&fx);
+    put(
+        &fx.p("work/.github/workflows/attest.yml"),
+        ATTEST_BYTES.as_bytes(),
+    );
+    let o = fx.grh("work", &[], &["install", "attest", "--repo", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.receipt().contains("attest.yml"), "{}", fx.receipt());
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.p("work/.github/workflows/attest.yml").exists());
+}
+
+#[test]
+fn a_failing_tool_uninstall_keeps_the_entry_and_exits_1() {
+    let fx = Fx::new();
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "guardrails", "--yes"])),
+        0
+    );
+    let o = fx.grh(
+        "work",
+        &[("FAKE_FAIL_UNINSTALL", "amont-agent")],
+        &["uninstall", "--yes"],
+    );
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    assert_eq!(fx.files("bin"), ["amont-agent"]);
+}
+
+#[test]
+fn an_unreachable_armed_repo_keeps_its_entry_and_the_binary_and_exits_1() {
+    let fx = Fx::new();
+    git_init(&fx);
+    let o = fx.grh("work", &[], &["install", "gate", "--repo", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    fs::remove_dir_all(fx.p("work")).unwrap();
+    let o = fx.grh("home", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    assert_eq!(fx.files("bin"), ["amont"]);
+}
+
+fn audit_install(fx: &Fx) -> (String, Vec<String>) {
+    git_init(fx);
+    let o = fx.grh("work", &[], &["audit", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let warnings = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w.as_str().unwrap().to_string())
+        .collect();
+    (v["install"].as_str().unwrap().to_string(), warnings)
+}
+
+#[test]
+fn audit_of_a_rust_repo_with_husky_recommends_solo_and_warns() {
+    let fx = Fx::new();
+    put(&fx.p("work/src/main.rs"), b"fn main() {}\n");
+    put(&fx.p("work/.husky/pre-commit"), b"#!/bin/sh\n");
+    let (install, warnings) = audit_install(&fx);
+    assert_eq!(install, "grh install solo");
+    assert!(warnings.iter().any(|w| w.contains("husky")), "{warnings:?}");
+}
+
+#[test]
+fn audit_of_a_typescript_repo_with_adrs_recommends_team() {
+    let fx = Fx::new();
+    put(&fx.p("work/src/a.ts"), b"export {};\n");
+    put(&fx.p("work/docs/adr/0001-x.md"), b"# 1\n");
+    let (install, _) = audit_install(&fx);
+    assert_eq!(install, "grh install team");
+}
+
+#[test]
+fn audit_of_an_empty_repo_recommends_solo() {
+    let fx = Fx::new();
+    let (install, warnings) = audit_install(&fx);
+    assert_eq!(install, "grh install solo");
+    assert!(warnings.is_empty(), "{warnings:?}");
 }

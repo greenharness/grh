@@ -317,7 +317,8 @@ impl Run<'_> {
                 .warn(&format!("{name}: claude not found, integration skipped"));
             return Ok(());
         }
-        match owner::query(&integ.query, bin, repo) {
+        let answer = owner::query(&integ.query, bin, repo);
+        match answer {
             Answer::Unknown => {
                 self.sum.gap(
                     &format!(
@@ -365,6 +366,27 @@ impl Run<'_> {
                 Ok(())
             }
             Answer::Absent | Answer::Partial => {
+                if answer == Answer::Partial {
+                    // Partial is installed by someone else unless a done
+                    // ToolInstall says grh placed this scope.
+                    let ours = self.store.receipt.entries.iter().any(|e| {
+                        same_scope(e, name, level, repo)
+                            && matches!(e.kind, Kind::ToolInstall { .. })
+                            && e.state == State::Done
+                    });
+                    if !ours {
+                        self.sum.gap(
+                            &format!(
+                                "{name}: the {which} integration is partly installed by someone else; left alone"
+                            ),
+                            &format!("finish or remove it with {name}'s own commands, then grh install {name}"),
+                        );
+                        self.ui.warn(&format!(
+                            "{name}: {which} integration partial, adopted gap, not touched"
+                        ));
+                        return Ok(());
+                    }
+                }
                 self.store.remove_where(|e| {
                     same_scope(e, name, level, repo)
                         && matches!(e.kind, Kind::ToolInstall { .. } | Kind::ToolInstallAdopted)
@@ -472,6 +494,14 @@ impl Run<'_> {
         if let Ok(cur) = std::fs::read(&path) {
             let cur_sha = sha256_hex(&cur);
             if cur_sha == new_sha {
+                if recorded.is_none() {
+                    // Identical bytes do not make it ours: someone else placed it.
+                    self.sum.skip(
+                        &format!("{want}: exists and grh did not place it"),
+                        "leave it, or remove it and grh install attest --repo",
+                    );
+                    return Ok(());
+                }
                 write = false;
             } else if recorded.as_deref() != Some(cur_sha.as_str()) {
                 if !self.replace {

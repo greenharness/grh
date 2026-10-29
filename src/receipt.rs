@@ -149,11 +149,11 @@ pub fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Exit> {
         fs::rename(&tmp, path)
     })();
     if let Err(e) = written {
-        let _ = fs::remove_file(&tmp);
+        let _ = fs::remove_file(&tmp); // best-effort cleanup; the write error is what we report
         return Err(fail("cannot write", e));
     }
     if let Ok(d) = File::open(dir) {
-        let _ = d.sync_all();
+        let _ = d.sync_all(); // directory fsync is best-effort; the rename already happened
     }
     Ok(())
 }
@@ -291,7 +291,7 @@ fn holder_message(lock_path: &Path) -> String {
     for _ in 0..50 {
         let mut text = String::new();
         if let Ok(mut f) = File::open(lock_path) {
-            let _ = f.read_to_string(&mut text);
+            let _ = f.read_to_string(&mut text); // an unreadable lock file just means no pid yet; retry
         }
         if let Ok(pid) = text.trim().parse::<u32>() {
             return format!(
