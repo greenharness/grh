@@ -6,7 +6,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 use grh::exit::Exit;
-use grh::{catalog, dispatch};
+use grh::{catalog, dispatch, install, status, uninstall};
 
 #[derive(Debug, Parser)]
 #[command(
@@ -82,11 +82,66 @@ enum Command {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result: Result<(), Exit> = match cli.command {
-        Command::Part(argv) => Err(dispatch::run(&catalog::Catalog::load(), &argv)),
-        Command::Install { .. }
-        | Command::Uninstall { .. }
-        | Command::Audit { .. }
-        | Command::Status { .. } => Err(Exit::Usage("not implemented yet".into())),
+        Command::Part(argv) => match catalog::Catalog::load() {
+            Ok(cat) => Err(dispatch::run(&cat, &argv)),
+            Err(e) => Err(e),
+        },
+        Command::Install {
+            names,
+            repo,
+            replace,
+            dry_run,
+            yes,
+            extension,
+            quiet,
+        } => {
+            if extension.is_some() {
+                Err(Exit::Usage("--extension is not supported yet".into()))
+            } else {
+                catalog::Catalog::load().and_then(|cat| {
+                    install::run(
+                        &cat,
+                        &install::Opts {
+                            names,
+                            repo,
+                            replace,
+                            dry_run,
+                            yes,
+                            quiet,
+                        },
+                    )
+                })
+            }
+        }
+        Command::Uninstall {
+            names,
+            repo,
+            keep_deps,
+            dry_run,
+            yes,
+            quiet,
+        } => catalog::Catalog::load().and_then(|cat| {
+            uninstall::run(
+                &cat,
+                &uninstall::Opts {
+                    names,
+                    repo,
+                    keep_deps,
+                    dry_run,
+                    yes,
+                    quiet,
+                },
+            )
+        }),
+        Command::Status { json } => catalog::Catalog::load().and_then(|cat| {
+            let format = if json {
+                status::Format::Json
+            } else {
+                status::Format::Text
+            };
+            status::run(&cat, format)
+        }),
+        Command::Audit { .. } => Err(Exit::Usage("not implemented yet".into())),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

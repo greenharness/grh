@@ -4,6 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Deserialize;
 
+use crate::exit::Exit;
+
 const CATALOG: &str = include_str!("../catalog.toml");
 
 #[derive(Debug, Deserialize)]
@@ -58,10 +60,26 @@ pub enum Unknown {
 }
 
 impl Catalog {
-    pub fn load() -> Catalog {
-        // The catalog is compiled in and checked by the tests below, so a
-        // parse failure is a build defect, never a runtime condition.
-        toml::from_str(CATALOG).expect("catalog.toml is valid")
+    /// The compiled-in catalog, or the file `GRH_CATALOG` names (a test hook
+    /// so the integration tests can pin their own fixture tarballs). A bad
+    /// file is a failure, never a panic.
+    pub fn load() -> Result<Catalog, Exit> {
+        if let Some(path) = std::env::var_os("GRH_CATALOG").filter(|p| !p.is_empty()) {
+            let text = std::fs::read_to_string(&path).map_err(|e| {
+                Exit::Failed(format!(
+                    "GRH_CATALOG {} is not readable: {e}",
+                    path.to_string_lossy()
+                ))
+            })?;
+            return toml::from_str(&text).map_err(|e| {
+                Exit::Failed(format!(
+                    "GRH_CATALOG {} is not a valid catalog: {e}",
+                    path.to_string_lossy()
+                ))
+            });
+        }
+        // Compiled in and checked by the tests below.
+        toml::from_str(CATALOG).map_err(|e| Exit::Failed(format!("catalog.toml is invalid: {e}")))
     }
 
     pub fn part(&self, name: &str) -> Option<&Part> {
@@ -124,7 +142,7 @@ mod tests {
 
     #[test]
     fn every_need_names_a_part_and_no_profile_collides_with_one() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         for p in &c.parts {
             for n in &p.needs {
                 assert!(c.part(n).is_some(), "{} needs unknown {n}", p.name);
@@ -140,7 +158,7 @@ mod tests {
 
     #[test]
     fn a_binary_part_pins_every_unix_target() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         for p in c.parts.iter().filter(|p| p.bin.is_some()) {
             for t in [
                 "aarch64-apple-darwin",
@@ -157,7 +175,7 @@ mod tests {
 
     #[test]
     fn profiles_expand_to_what_the_site_lists() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         let solo = names(&c.resolve(&args(&["solo"])).unwrap());
         assert_eq!(solo, ["gate", "guardrails"]);
         let team = names(&c.resolve(&args(&["team"])).unwrap());
@@ -169,7 +187,7 @@ mod tests {
 
     #[test]
     fn dependencies_are_added_before_what_needs_them() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         assert_eq!(
             names(&c.resolve(&args(&["conform"])).unwrap()),
             ["decisions", "conform"]
@@ -186,7 +204,7 @@ mod tests {
 
     #[test]
     fn an_unknown_name_is_refused() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         assert_eq!(
             c.resolve(&args(&["gate", "nope"])).unwrap_err(),
             Unknown::Name("nope".into())
@@ -195,7 +213,7 @@ mod tests {
 
     #[test]
     fn dependents_are_the_installed_parts_that_need_it() {
-        let c = Catalog::load();
+        let c = Catalog::load().unwrap();
         let installed: BTreeSet<String> = ["decisions", "conform", "gate"].map(String::from).into();
         assert_eq!(c.dependents("decisions", &installed), ["conform"]);
         assert!(c.dependents("gate", &installed).is_empty());

@@ -218,22 +218,7 @@ impl Store {
     }
 
     fn load(&self) -> Result<Receipt, Exit> {
-        let path = self.path();
-        let text = match fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Receipt::default()),
-            Err(e) => return Err(Exit::Failed(format!("cannot read {}: {e}", path.display()))),
-        };
-        let receipt: Receipt = serde_json::from_str(&text)
-            .map_err(|e| Exit::Failed(format!("{} is not a receipt: {e}", path.display())))?;
-        if receipt.version > VERSION {
-            return Err(Exit::Failed(format!(
-                "{} is version {}, newer than this grh understands ({VERSION}): upgrade grh",
-                path.display(),
-                receipt.version
-            )));
-        }
-        Ok(receipt)
+        read_in(&self.dir)
     }
 
     /// Write the receipt: temp file, fsync, rename.
@@ -274,6 +259,27 @@ impl Store {
             .filter(|e| e.state == State::Pending)
             .collect()
     }
+}
+
+/// Read the receipt in the `grh` state directory `dir` without locking or
+/// creating anything (status and plans); a missing receipt is empty.
+pub fn read_in(dir: &Path) -> Result<Receipt, Exit> {
+    let path = dir.join("receipt.json");
+    let text = match fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Receipt::default()),
+        Err(e) => return Err(Exit::Failed(format!("cannot read {}: {e}", path.display()))),
+    };
+    let receipt: Receipt = serde_json::from_str(&text)
+        .map_err(|e| Exit::Failed(format!("{} is not a receipt: {e}", path.display())))?;
+    if receipt.version > VERSION {
+        return Err(Exit::Failed(format!(
+            "{} is version {}, newer than this grh understands ({VERSION}): upgrade grh",
+            path.display(),
+            receipt.version
+        )));
+    }
+    Ok(receipt)
 }
 
 fn holder_message(lock_path: &Path) -> String {
