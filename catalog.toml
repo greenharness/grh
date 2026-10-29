@@ -25,13 +25,13 @@ summary = "what is decided: architecture decision records, resolved"
 needs = []
 bin = "aval"
 repo = "fredericrous/aval"
-version = "1.11.0"
+version = "1.12.0"
 skills = ["relais-architecture-conflict"]
 [part.sha256]
-aarch64-apple-darwin = "425cfe653b6872f94b7bd8a562c9f67ffecdc178463f6bcadee9f0eb57f73357"
-x86_64-apple-darwin = "ddf1ff735a381c1d733669591d475c02572914a16e719d2b5c179c76305c8819"
-aarch64-unknown-linux-gnu = "a6a0680c5fd4944733335ea336daacc30ca38747583366e665189f68281faa01"
-x86_64-unknown-linux-gnu = "9f351a024264a55a068839c5179c9270ba2506823cc9f77c817f8514eb8668fd"
+aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
+x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
+aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
+x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
 [part.machine]
 install = ["{bin}", "mcp", "install", "--write"]
 uninstall = ["{bin}", "mcp", "uninstall", "--write"]
@@ -47,13 +47,13 @@ summary = "what a commit or a push may carry: git hooks"
 needs = []
 bin = "amont"
 repo = "fredericrous/amont"
-version = "1.61.1"
+version = "1.64.0"
 skills = ["relais-verified-push", "merge-when-green", "tag-release"]
 [part.sha256]
-aarch64-apple-darwin = "20931aeebc582c8d5f49089af08d4a4bbd84239d83e8976b84d344c529aafcf9"
-x86_64-apple-darwin = "06421f6d615f47ed106a6ba48c9d85f237bc2e635cb9a362790c44df1c60e835"
-aarch64-unknown-linux-gnu = "b027db36d054e4ee730dfa5d87815e3c9275c26898d3171eb6e290a4cb356efd"
-x86_64-unknown-linux-gnu = "fce7bb15a0086c0d9b8436717a04bbf0d2b0c921b1135818569168853d870f8e"
+aarch64-apple-darwin = "b8e943c18abc86340b9f22f355cb4259bfba20fbcebf42183c5d5fcd3b638e00"
+x86_64-apple-darwin = "d065f6f7d0df457d71b699fc49fc8bf7347616cb9c2460ae4cd193b97deeb7ca"
+aarch64-unknown-linux-gnu = "9a0393d45159dc8e4dd92e8ca467f3cc2fc6ec655101574642dc16e8a535b8b8"
+x86_64-unknown-linux-gnu = "bf5c07e7f68c99c27bcb5aef9a983a278fc1f5f911fb8840d2baac4662bcc07e"
 # `amont init`, never `amont install`: install copies the binary and fills
 # the machine's git template dir, machine state a repo step must not touch.
 [part.repo_level]
@@ -67,13 +67,13 @@ summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 bin = "amont-agent"
 repo = "fredericrous/amont-agent"
-version = "3.8.0"
+version = "3.9.0"
 skills = []
 [part.sha256]
-aarch64-apple-darwin = "518c0221de53f64869a19b0ea0b5fd13ff5877e45b74a966f0cf0abaaf30d02e"
-x86_64-apple-darwin = "f2f1059ccb7f336136625a361a6a26190c5f966188a7cc6f55f633a497a7df31"
-aarch64-unknown-linux-gnu = "953bd7064c23d4bd51b90edb269cc5fd8887dce773134aaae94bf8397b695b4a"
-x86_64-unknown-linux-gnu = "5777d1f754ce6e70991c30934106a4973816a3e6e6318dbbb1704f4b028f0954"
+aarch64-apple-darwin = "d8a8629aa032dc1fb4d7b88b5cdb1938deb85292dc0ee78238ea20503848d243"
+x86_64-apple-darwin = "8bc951b0da6952ee951abefeb1f59ae6034d2eebc540cca5e01994aa34d06c87"
+aarch64-unknown-linux-gnu = "29862782c8bdd1ce846d95e5e7921f380569ac84ea2cb870ef9b04f11de086ac"
+x86_64-unknown-linux-gnu = "2ea7389937aa38ad8fb2ae56b8d5ffb1e33bb9e81a17073d54ecdc6ef8ce276a"
 [part.machine]
 install = ["{bin}", "install", "--write"]
 uninstall = ["{bin}", "uninstall", "--write"]

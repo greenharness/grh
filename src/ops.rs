@@ -50,23 +50,23 @@ impl Ui {
         }
     }
 
-    pub fn say(&self, m: &str) {
+    pub fn say(&self, message: &str) {
         if !self.quiet {
-            eprintln!("{m}");
+            eprintln!("{message}");
         }
     }
 
-    pub fn ok(&self, m: &str) {
-        self.say(&format!("{} {m}", mark(Mark::Ok, self.color)));
+    pub fn ok(&self, message: &str) {
+        self.say(&format!("{} {message}", mark(Mark::Ok, self.color)));
     }
 
-    pub fn warn(&self, m: &str) {
-        self.say(&format!("{} {m}", mark(Mark::Warn, self.color)));
+    pub fn warn(&self, message: &str) {
+        self.say(&format!("{} {message}", mark(Mark::Warn, self.color)));
     }
 
     /// An error: shown even when quiet.
-    pub fn fail(&self, m: &str) {
-        eprintln!("{} {m}", mark(Mark::Fail, self.color));
+    pub fn fail(&self, message: &str) {
+        eprintln!("{} {message}", mark(Mark::Fail, self.color));
     }
 }
 
@@ -193,8 +193,8 @@ pub fn git_root() -> Result<PathBuf, Exit> {
         .stderr(Stdio::null())
         .output();
     match out {
-        Ok(o) if o.status.success() => {
-            let top = String::from_utf8_lossy(&o.stdout).trim().to_string();
+        Ok(output) if output.status.success() => {
+            let top = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if top.is_empty() {
                 Err(not_in_repo())
             } else {
@@ -209,8 +209,8 @@ fn not_in_repo() -> Exit {
     Exit::Usage("--repo needs the current directory to be inside a git work tree".into())
 }
 
-pub fn absolute(p: &Path) -> PathBuf {
-    std::path::absolute(p).unwrap_or_else(|_| p.to_path_buf())
+pub fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// `{bin}` replaced by the binary's absolute path.
@@ -248,7 +248,7 @@ pub fn on_path(name: &str) -> bool {
     let path = std::env::var_os("PATH").unwrap_or_default();
     std::env::split_paths(&path).any(|d| {
         std::fs::metadata(d.join(name))
-            .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            .map(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0)
             .unwrap_or(false)
     })
 }
@@ -269,8 +269,8 @@ pub fn recorded_bin(receipt: &Receipt, part: &str) -> Option<(PathBuf, bool)> {
 /// The part's binary: the receipt's, else the first on PATH or in grh's bin dir.
 pub fn bin_for(receipt: &Receipt, part: &Part) -> Option<PathBuf> {
     recorded_bin(receipt, &part.name)
-        .map(|(p, _)| p)
-        .filter(|p| p.exists())
+        .map(|(path, _)| path)
+        .filter(|path| path.exists())
         .or_else(|| part.bin.as_deref().and_then(dispatch::find))
 }
 
@@ -287,8 +287,8 @@ pub fn same_scope(e: &Entry, part: &str, level: Level, repo: Option<&Path>) -> b
 
 pub fn listing(cat: &Catalog) -> String {
     let mut out = String::from("name parts or profiles to install.\nparts:\n");
-    for p in &cat.parts {
-        out.push_str(&format!("  {:<11} {}\n", p.name, p.summary));
+    for part in &cat.parts {
+        out.push_str(&format!("  {:<11} {}\n", part.name, part.summary));
     }
     out.push_str("profiles:\n");
     for (name, members) in &cat.profiles {

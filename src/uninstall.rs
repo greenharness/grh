@@ -33,19 +33,19 @@ fn in_scope(e: &Entry, part: &str, only_repo: Option<&Path>) -> bool {
         }
 }
 
-pub fn run(cat: &Catalog, o: &Opts) -> Result<(), Exit> {
-    let ui = Ui::new(o.quiet);
-    let only_repo = if o.repo { Some(git_root()?) } else { None };
+pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
+    let ui = Ui::new(opts.quiet);
+    let only_repo = if opts.repo { Some(git_root()?) } else { None };
     let state_dir = receipt::state_dir()?;
     let before = receipt::read_in(&state_dir)?;
     let held: BTreeSet<String> = before.entries.iter().map(|e| e.part.clone()).collect();
 
     // The parts to remove, dependents before what they need.
     let mut targets: BTreeSet<String> = BTreeSet::new();
-    if o.names.is_empty() {
+    if opts.names.is_empty() {
         targets.extend(held.iter().cloned());
     } else {
-        for n in &o.names {
+        for n in &opts.names {
             if let Some(members) = cat.profiles.get(n) {
                 targets.extend(members.iter().cloned());
             } else if cat.part(n).is_some() {
@@ -55,22 +55,29 @@ pub fn run(cat: &Catalog, o: &Opts) -> Result<(), Exit> {
             }
         }
     }
-    let all: Vec<String> = cat.parts.iter().map(|p| p.name.clone()).collect();
+    let all: Vec<String> = cat
+        .parts
+        .iter()
+        .map(|planned| planned.name.clone())
+        .collect();
     let order: Vec<&Part> = cat
         .resolve(&all)
         .map_err(|Unknown::Name(n)| Exit::Usage(format!("unknown part {n}")))?
         .into_iter()
         .rev()
-        .filter(|p| targets.contains(&p.name))
+        .filter(|planned| targets.contains(&planned.name))
         .collect();
-    let (todo, absent): (Vec<&Part>, Vec<&Part>) = order.into_iter().partition(|p| {
+    let (todo, absent): (Vec<&Part>, Vec<&Part>) = order.into_iter().partition(|planned| {
         before
             .entries
             .iter()
-            .any(|e| in_scope(e, &p.name, only_repo.as_deref()))
+            .any(|e| in_scope(e, &planned.name, only_repo.as_deref()))
     });
-    for p in &absent {
-        ui.say(&format!("{}: nothing recorded by grh, skipped", p.name));
+    for planned in &absent {
+        ui.say(&format!(
+            "{}: nothing recorded by grh, skipped",
+            planned.name
+        ));
     }
     if todo.is_empty() {
         ui.say("nothing to uninstall");
@@ -84,39 +91,39 @@ pub fn run(cat: &Catalog, o: &Opts) -> Result<(), Exit> {
             .filter(|h| !targets.contains(*h))
             .cloned()
             .collect();
-        for p in &todo {
-            for dep in cat.dependents(&p.name, &remaining) {
-                if o.keep_deps {
+        for planned in &todo {
+            for dep in cat.dependents(&planned.name, &remaining) {
+                if opts.keep_deps {
                     return Err(Exit::Failed(format!(
                         "{} is needed by {dep}: run `grh uninstall {dep}` first (nothing changed)",
-                        p.name
+                        planned.name
                     )));
                 }
                 ui.warn(&format!(
                     "{dep} still needs {}: it will stop working; remove it with `grh uninstall {dep}`",
-                    p.name
+                    planned.name
                 ));
             }
         }
     }
 
     ui.say("grh will remove:");
-    for p in &todo {
+    for planned in &todo {
         let n = before
             .entries
             .iter()
-            .filter(|e| in_scope(e, &p.name, only_repo.as_deref()))
+            .filter(|e| in_scope(e, &planned.name, only_repo.as_deref()))
             .count();
         ui.say(&format!(
             "  {}: {n} recorded step(s), undone newest scope first",
-            p.name
+            planned.name
         ));
     }
-    if o.dry_run {
+    if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
     }
-    if !confirm(Consent::from_yes_flag(o.yes), "uninstall")? {
+    if !confirm(Consent::from_yes_flag(opts.yes), "uninstall")? {
         ui.say("nothing changed");
         return Ok(());
     }

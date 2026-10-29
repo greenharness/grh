@@ -504,3 +504,14 @@ fn status_reports_the_current_repos_owner_when_two_repos_are_armed() {
         .unwrap();
     assert_eq!(gate["repo"]["owner"], "grh", "{gate}");
 }
+
+#[test]
+fn a_bad_catalog_override_fails_with_exit_1_not_a_panic() {
+    let fx = Fx::new();
+    put(&fx.p("bad.toml"), b"this is not [a catalog");
+    let bad = fx.p("bad.toml").to_string_lossy().into_owned();
+    let output = fx.grh("work", &[("GRH_CATALOG", &bad)], &["status"]);
+    assert_eq!(code(&output), 1, "{}", err(&output));
+    assert!(err(&output).contains("GRH_CATALOG"), "{}", err(&output));
+    assert!(!err(&output).contains("panicked"), "{}", err(&output));
+}

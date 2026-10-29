@@ -50,39 +50,39 @@ struct Run<'a> {
 
 fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     ui.say("grh will install:");
-    for p in parts {
-        ui.say(&format!("  {}: {}", p.name, p.summary));
-        if let (Some(bin), Some(v)) = (&p.bin, &p.version) {
+    for part in parts {
+        ui.say(&format!("  {}: {}", part.name, part.summary));
+        if let (Some(bin), Some(v)) = (&part.bin, &part.version) {
             ui.say(&format!(
                 "      binary {bin} {v}: adopt the one on PATH, else download"
             ));
         }
-        if let Some(machine) = &p.machine {
+        if let Some(machine) = &part.machine {
             ui.say(&format!(
                 "      machine: {} (unless already present)",
                 machine.install.join(" ")
             ));
         }
-        if let (Some(r), Some(_)) = (&p.repo_level, repo) {
+        if let (Some(r), Some(_)) = (&part.repo_level, repo) {
             ui.say(&format!(
                 "      repo: {} (unless already present)",
                 r.install.join(" ")
             ));
         }
-        if !p.skills.is_empty() || !p.agents.is_empty() {
+        if !part.skills.is_empty() || !part.agents.is_empty() {
             ui.say(&format!(
                 "      {} skills and {} agents into the Claude config directory",
-                p.skills.len(),
-                p.agents.len()
+                part.skills.len(),
+                part.agents.len()
             ));
         }
-        if p.workflow.is_some() {
+        if part.workflow.is_some() {
             ui.say("      the attest CI workflow (needs --repo)");
         }
-        if let Some(h) = &p.hint {
+        if let Some(h) = &part.hint {
             ui.say(&format!("      then by hand: {h}"));
         }
-        if p.extension.is_some() {
+        if part.extension.is_some() {
             ui.say("      extension: not published yet");
         }
     }
