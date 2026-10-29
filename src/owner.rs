@@ -169,6 +169,10 @@ pub fn amont_template(bin: &Path, placed: &str) -> Template {
             }) else {
                 return Template::Keep("amont's template directory state is unknown".into());
             };
+            // Present with no shims contradicts itself: unknown, not absent.
+            if binaries.is_empty() {
+                return Template::Keep("amont's template directory state is unknown".into());
+            }
             if binaries.into_iter().any(same) {
                 Template::Keep("amont's template directory shims bake it".into())
             } else {
