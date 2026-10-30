@@ -3,6 +3,18 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## v0.1.1
+
+### Changed
+
+- **router pins relais 0.39.0**, whose `doctor --json` reports its Claude
+  Code integration, so grh adopts or installs it instead of reporting it
+  unknown.
+- relais 0.39.0 stops writing `relais-verified-push` and
+  `relais-architecture-conflict`; grh now places them with gate and
+  decisions. After upgrading relais, run `grh install gate decisions` once.
+- `grh audit --json` and `grh status --json` share one output switch.
+
 ## v0.1.0
 
 ### Added

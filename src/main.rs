@@ -153,9 +153,14 @@ fn main() -> ExitCode {
             };
             status::run(&cat, format)
         }),
-        Command::Audit { dir, json } => {
-            catalog::Catalog::load().and_then(|cat| audit::run(&cat, dir.as_deref(), json))
-        }
+        Command::Audit { dir, json } => catalog::Catalog::load().and_then(|cat| {
+            let format = if json {
+                status::Format::Json
+            } else {
+                status::Format::Text
+            };
+            audit::run(&cat, dir.as_deref(), format)
+        }),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
