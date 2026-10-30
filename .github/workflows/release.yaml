@@ -170,7 +170,59 @@ jobs:
             echo "|---|---|---|"
             echo "| GitHub release | yes | nothing |"
             echo "| crates.io | ${{ vars.PUBLISH_CRATES == 'true' && 'yes' || 'NO' }} | \`PUBLISH_CRATES\` + \`CARGO_REGISTRY_TOKEN\` |"
+            echo "| homebrew tap | ${{ vars.PUBLISH_TAP == 'true' && 'yes' || 'NO' }} | \`PUBLISH_TAP\` + \`TAP_DEPLOY_KEY\` |"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # `brew upgrade fredericrous/tap/grh`. From the PUBLISHED release, so the
+  # formula names the bytes an installer downloads. bump-tap.py rewrites an
+  # existing formula and refuses any surprise; it never creates one.
+  publish-tap:
+    name: publish to the homebrew tap
+    needs: [guard, publish]
+    if: needs.guard.outputs.dry_run == 'false' && vars.PUBLISH_TAP == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the published checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release download "v$VERSION" --pattern SHA256SUMS
+      - name: Clone the tap
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$TAP_DEPLOY_KEY" > ~/.ssh/tap_key
+          chmod 600 ~/.ssh/tap_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          echo "GIT_SSH_COMMAND=ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes" >> "$GITHUB_ENV"
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_key -o IdentitiesOnly=yes" \
+            git clone --depth 1 git@github.com:fredericrous/homebrew-tap.git tap
+      - name: Rewrite the formula
+        run: |
+          set -euo pipefail
+          python3 scripts/bump-tap.py "$VERSION" SHA256SUMS tap/Formula/grh.rb
+          ruby -c tap/Formula/grh.rb
+      - name: Push
+        run: |
+          set -euo pipefail
+          cd tap
+          if git diff --quiet; then
+            echo "the tap already carries $VERSION, nothing to publish"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Formula/grh.rb
+          git commit -m "chore: grh $VERSION"
+          git push origin HEAD
+          echo "brew upgrade fredericrous/tap/grh: v$VERSION" >> "$GITHUB_STEP_SUMMARY"
 
   # `cargo install grh`. Armed only when the person sets the variable and the
   # token: an unarmed channel says so in the summary above.
