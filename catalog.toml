@@ -85,13 +85,13 @@ summary = "which model runs a bounded task, verified and accounted"
 needs = []
 bin = "relais"
 repo = "fredericrous/relais"
-version = "0.36.0"
+version = "0.39.0"
 skills = []
 [part.sha256]
-aarch64-apple-darwin = "5ef4a0b10680e317b6027a2643edd912f9c95f4162f32d9b847eb42e6c94794b"
-x86_64-apple-darwin = "b45fee24f93b3886fcc27766c33501a9ab17e46b17e56eed54bcd2dc5b7241ae"
-aarch64-unknown-linux-gnu = "af92c57101ffd85216383c951d00c7f1b9e84f5ef1b9b28803e1a8d825688b55"
-x86_64-unknown-linux-gnu = "c493ad55b43137f40c7797e88c73b94d6cb5950544ff9ad40e24e8752c1274f1"
+aarch64-apple-darwin = "aa3a27c88e8102f2cd92495d5d05e45ba83b45f469109c363821f9dfcee5e639"
+x86_64-apple-darwin = "c6fb9b233500e34f05cdefcfdbc0e9f33a8438d7b77b80bb45cc73d10d0ac95f"
+aarch64-unknown-linux-gnu = "9e53a39d04cd69fef0a1d233a0d3e2528f68e404be5cf85860d503964b021dd5"
+x86_64-unknown-linux-gnu = "b87768ec14b0c55c29a512156a6cc8f94e660733bb3670be874cf271ae26b455"
 [part.machine]
 install = ["{bin}", "install", "--claude", "--user", "--write"]
 uninstall = ["{bin}", "uninstall", "--claude", "--user", "--write"]
