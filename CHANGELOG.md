@@ -3,6 +3,16 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## v0.1.2
+
+### Changed
+
+- **workflow places skills 0.1.1**, whose `worktree-sweep` stops what still
+  runs in a deleted worktree, not only language servers: test browsers, dev
+  servers, shells, and orphaned `chrome-devtools-mcp` servers. A live Claude
+  Code session and its own tools are never touched, and a worktree a session
+  works in is held. Run `grh install workflow` once after upgrading.
+
 ## v0.1.1
 
 ### Changed
