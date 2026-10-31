@@ -13,6 +13,8 @@ section is missing here.
   so a session messages the session that already works a change instead of
   redoing it. Without the board, each runs its git check alone. Run
   `grh install workflow` once after upgrading.
+- **guardrails pins amont-agent 3.10.0**, which adds `amont-agent board`,
+  the session activity record and the advisory `work-overlap` rule.
 
 ## v0.1.2
 
