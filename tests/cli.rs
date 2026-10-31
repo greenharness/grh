@@ -371,6 +371,27 @@ fn a_bare_install_lists_parts_and_exits_2() {
 }
 
 #[test]
+fn help_wins_over_an_unknown_flag_and_the_flag_alone_exits_2() {
+    let fx = Fx::new();
+    let out = |o: &Output| String::from_utf8_lossy(&o.stdout).into_owned();
+    for args in [&["--bogus", "--help"][..], &["--bogus", "-h"], &["--help"]] {
+        let o = fx.grh("work", &[], args);
+        assert_eq!(code(&o), 0, "{args:?}: {}", err(&o));
+        assert!(out(&o).contains("Usage: grh"), "{args:?}: {}", out(&o));
+    }
+    let o = fx.grh("work", &[], &["install", "--bogus", "--help"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(out(&o).contains("Usage: grh install"), "{}", out(&o));
+    let o = fx.grh("work", &[], &["--bogus-flag-for-probe"]);
+    assert_eq!(code(&o), 2);
+    assert!(
+        out(&o).is_empty(),
+        "the usage error goes to stderr: {}",
+        out(&o)
+    );
+}
+
+#[test]
 fn dry_run_changes_nothing() {
     let fx = Fx::new();
     let o = fx.grh("work", &[], &["install", "solo", "--dry-run"]);
