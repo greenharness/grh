@@ -3,6 +3,19 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## v0.1.3
+
+### Changed
+
+- **workflow places skills 0.2.0**: `worktree-task`, `diagnosing-bugs` and
+  `tag-release` first check what other sessions are doing in the repository
+  (`amont-agent board`, amont-agent 3.10.0 or later) and what just landed,
+  so a session messages the session that already works a change instead of
+  redoing it. Without the board, each runs its git check alone. Run
+  `grh install workflow` once after upgrading.
+- **guardrails pins amont-agent 3.10.0**, which adds `amont-agent board`,
+  the session activity record and the advisory `work-overlap` rule.
+
 ## v0.1.2
 
 ### Changed
