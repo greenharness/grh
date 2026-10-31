@@ -3,6 +3,15 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## Unreleased
+
+### Fixed
+
+- `grh --bogus --help` prints the help and exits 0: help wins over an unknown
+  flag (cli.help.help-and-version), and `grh install --bogus --help` prints
+  install's help. An unknown flag alone still exits 2, and a part's own
+  arguments (`grh decisions --help`) still reach the part.
+
 ## v0.1.3
 
 ### Changed

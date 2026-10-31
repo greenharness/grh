@@ -79,8 +79,57 @@ enum Command {
     Part(Vec<OsString>),
 }
 
+/// The argv that asks clap for the help `args` wanted, when an unknown
+/// argument stopped the parse and `-h` or `--help` stands before any `--`
+/// (cli.help.help-and-version: `grh --bogus --help` is someone asking how to
+/// use us). It keeps the subcommand path the words name and drops everything
+/// else, so clap prints the same help as `grh <path> --help`. A part's own
+/// arguments never get here: `grh decisions --bogus --help` parses as that
+/// part's command and is passed through.
+fn help_argv(args: &[OsString]) -> Option<Vec<OsString>> {
+    use clap::CommandFactory;
+    let mut command = Cli::command();
+    let mut argv = vec![args.first()?.clone()];
+    let mut wants_help = false;
+    for arg in args.iter().skip(1) {
+        let Some(word) = arg.to_str() else { continue };
+        match word {
+            "--" => break,
+            "-h" | "--help" => wants_help = true,
+            _ if word.starts_with('-') => {}
+            _ => {
+                if let Some(sub) = command.find_subcommand(word).cloned() {
+                    argv.push(arg.clone());
+                    command = sub;
+                }
+            }
+        }
+    }
+    wants_help.then(|| {
+        argv.push("--help".into());
+        argv
+    })
+}
+
+/// `Cli::parse`, except that help wins over an unknown argument.
+fn parse_cli() -> Cli {
+    let args: Vec<OsString> = std::env::args_os().collect();
+    match Cli::try_parse_from(&args) {
+        Ok(cli) => cli,
+        Err(e) if e.kind() == clap::error::ErrorKind::UnknownArgument => {
+            match help_argv(&args).map(Cli::try_parse_from) {
+                Some(Err(help)) if help.kind() == clap::error::ErrorKind::DisplayHelp => {
+                    help.exit()
+                }
+                _ => e.exit(),
+            }
+        }
+        Err(e) => e.exit(),
+    }
+}
+
 fn main() -> ExitCode {
-    let cli = Cli::parse();
+    let cli = parse_cli();
     let result: Result<(), Exit> = match cli.command {
         Command::Part(argv) => match catalog::Catalog::load() {
             Ok(cat) => Err(dispatch::run(&cat, &argv)),
