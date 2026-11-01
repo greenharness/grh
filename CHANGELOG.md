@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.5
+
+### Changed
+
+- Pins amont-agent 3.12.0. `amont-agent board` reads a squash-merged branch as merged instead of in flight, `work-overlap` names the plan the other session's branch added, the hook costs less on every write, and a `git patch-id` that exits early no longer kills the hook. Run `grh install guardrails` after upgrading.
+
 ## v0.1.4
 
 ### Changed
