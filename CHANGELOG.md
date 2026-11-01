@@ -9,7 +9,7 @@ section is missing here.
 
 ### Changed
 
-- Pins skills 0.3.0 and amont-agent 3.11.0. A plan can name, in a `## Code review` section, the expert profiles that review its code before the push. The workflow part now installs their seven `code-review-<role>` agents, and amont-agent's push hook waits for each declared profile's review.
+- Pins skills 0.3.0 and amont-agent 3.11.0. A plan can name, in a `## Code review` section, the expert profiles that review its code before the push. The workflow part now installs their seven `code-review-<role>` agents, and amont-agent's push hook waits for each declared profile's review. Run `grh install workflow` once after upgrading, so the new agents are placed.
 
 ### Fixed
 
