@@ -67,13 +67,13 @@ summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 bin = "amont-agent"
 repo = "fredericrous/amont-agent"
-version = "3.11.0"
+version = "3.12.0"
 skills = []
 [part.sha256]
-aarch64-apple-darwin = "f63a94aa88099f537b903357e812bc4049182b01949ed6bd0101e02a2a6563c6"
-x86_64-apple-darwin = "75328aae90cdad15a53f8d46d505fdcc0003e6da7af7cc7ae60a5e4077e02b9e"
-aarch64-unknown-linux-gnu = "b4b407d46ce449c6a792e3ad2f90df75166dfddf9d10ecee06d72e4a57ce36ec"
-x86_64-unknown-linux-gnu = "754da2eb7d8ef2b3cfd22fe2209be0bda4e825b203de5e9b59f0284ad78f2efa"
+aarch64-apple-darwin = "7f63b9949794c75353d1048ee61138f796176e272fa5b2e9a833aaaa9b5acc7a"
+x86_64-apple-darwin = "437528118d76391b00a02339feb3f885fa40c8e2a5a42be43aa37f8083a24549"
+aarch64-unknown-linux-gnu = "f3e82c72740c19fb301bfc5b0e442784eef9e35ee9a17539bf2910e2f7d2056a"
+x86_64-unknown-linux-gnu = "c4c3839e56c09eb513afdc58471dd127d397b6677a76afb78eca2d9c5fd0c6a9"
 [part.machine]
 install = ["{bin}", "install", "--write"]
 uninstall = ["{bin}", "uninstall", "--write"]
