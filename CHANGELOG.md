@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.6
+
+### Changed
+
+- Pins amont-agent 3.13.0: a code-review profile's `approve` given earlier in the session carries to a fix commit without a re-run, and implementation-review's review block is read from the prompt's header only.
+- Pins skills 0.3.1: the code-review agents and worktree-task say the brief goes by path because it is long, and that the prompt's own lines come first. Run `grh install workflow` once after upgrading.
+
 ## v0.1.5
 
 ### Changed
