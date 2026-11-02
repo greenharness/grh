@@ -9,7 +9,7 @@ section is missing here.
 
 ### Changed
 
-- Pins amont-agent 3.15.0: `push-preview` no longer diffs from a stale remote-tracking ref already in the default branch, and an identical before/after pair is approved as `unchanged` with no question (ADR-0057).
+- Pins amont-agent 3.15.1: `push-preview` no longer diffs from a stale remote-tracking ref (merged, squash-merged, or on a rewritten branch), and an identical before/after pair is approved as `unchanged` with no question (ADR-0057).
 - Pins skills 0.3.3: worktree-task F7 skips the question for an `unchanged` preview, with a fallback when the hook does not approve it. Run `grh install workflow` once after upgrading.
 
 ## v0.1.7
