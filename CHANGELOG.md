@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.7
+
+### Changed
+
+- Pins amont-agent 3.14.0: a branch that changes only its plan needs no code-review profile (implementation-review still checks the record), and a pointer plan declares through its own `## Code review` line, so an approval from the session carries for cross-repository plans. It also carries pulldown-cmark 0.13.6 (RUSTSEC-2026-0433).
+- Pins skills 0.3.2: the worktree-task pointer template carries this repository's `## Code review` line, copied from the canonical plan. Run `grh install workflow` once after upgrading.
+
 ## v0.1.6
 
 ### Changed
