@@ -11,8 +11,8 @@
 # / unknown.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.3.3"
-skills_sha256 = "8e781f4d65fd445fe6dfb95259cff5b5913859d6a814aa0577dcab2bc84757ba"
+skills_version = "0.3.4"
+skills_sha256 = "0da702902afebd0ab4aef53c6738de33692d4cac46ca9a09bf70e82d0ccfa1ef"
 
 [profiles]
 solo = ["gate", "guardrails"]
@@ -67,13 +67,13 @@ summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 bin = "amont-agent"
 repo = "fredericrous/amont-agent"
-version = "3.15.1"
+version = "3.16.0"
 skills = []
 [part.sha256]
-aarch64-apple-darwin = "c6e5ffdbffa7fb52f19dbe74b9dab3e5d26e76f2000a7df6dc499b63927eca31"
-x86_64-apple-darwin = "b818b1a465ce45bcd8f2bc7eeb874b3306a7d887862a76ac680699da220da232"
-aarch64-unknown-linux-gnu = "11a0c4e2566df7390e7e5323241f918844da38707225aa751a88a3d5eb4defa4"
-x86_64-unknown-linux-gnu = "862cfa93f749036ca59503e59a4c023e21a4ac8e0db30630cdc9bc0584abd5d6"
+aarch64-apple-darwin = "af35203e45879ad46648685345c0d6823cfd63b9952cd42a2e5f36c1016d2722"
+x86_64-apple-darwin = "aed7cc32ac695eb0d0064dbac27ad0361a4d6e93036bbbfcbd9ade26d42674d7"
+aarch64-unknown-linux-gnu = "956868e3114e7ba753765e0f014bd3dc218cbcc3ca0305bc77c54651a4be49f9"
+x86_64-unknown-linux-gnu = "e150d4c06791662afbd34b9cce3987ef47697b1cc9998c07d04fa804f93f7d51"
 [part.machine]
 install = ["{bin}", "install", "--write"]
 uninstall = ["{bin}", "uninstall", "--write"]

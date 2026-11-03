@@ -3,6 +3,12 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## v0.1.9
+
+### Changed
+
+- Pins amont-agent 3.16.0 (`amont-agent open` and the `ask-unopened-page` rule, ADR-0058) and skills 0.3.4 (worktree-task F7 opens the app with `amont-agent open`).
+
 ## Unreleased
 
 ## v0.1.8
