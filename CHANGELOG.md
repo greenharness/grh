@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.10
+
+### Changed
+
+- Pins amont-agent 3.16.1: a plan-review reviewer resumed with `SendMessage` counts once its message starts with the new `<<<PLAN …>>>` block, so round 2 and a delta can resume a reviewer instead of launching a fresh one.
+- Pins skills 0.3.5: the plan-review skill says so. Run `grh install workflow` once after upgrading.
+
 ## v0.1.9
 
 ### Changed
