@@ -3,13 +3,14 @@
 What an upgrader gets, in sentences. The release workflow refuses a tag whose
 section is missing here.
 
+## Unreleased
+
 ## v0.1.9
 
 ### Changed
 
-- Pins amont-agent 3.16.0 (`amont-agent open` and the `ask-unopened-page` rule, ADR-0058) and skills 0.3.4 (worktree-task F7 opens the app with `amont-agent open`).
-
-## Unreleased
+- Pins amont-agent 3.16.0: `amont-agent open <url|path>` opens a page through the machine's opener (`amont.agent.opener`), and the `ask-unopened-page` rule refuses a question that names a local page nobody opened (ADR-0058).
+- Pins skills 0.3.4: worktree-task F7 opens the app with `amont-agent open`. Run `grh install workflow` once after upgrading.
 
 ## v0.1.8
 
