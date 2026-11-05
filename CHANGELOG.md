@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.11
+
+### Changed
+
+- Pins skills 0.3.6: every first-party reviewer agent now inherits the root session model, and the plan-review and worktree-task skills pass `model: "opus"` and retry a reviewer once on the root model when the preferred one is unavailable (new `agent-model-fallback` skill). Run `grh install workflow` once after upgrading.
+
 ## v0.1.10
 
 ### Changed
