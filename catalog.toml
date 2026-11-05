@@ -129,7 +129,7 @@ needs = ["gate", "guardrails"]
 skills = [
   "plan-review", "worktree-task", "worktree-sweep", "diagnosing-bugs", "retro",
   "interface-review", "interface", "accessibility", "layout", "writing",
-  "motion-design",
+  "motion-design", "agent-model-fallback",
 ]
 agents = [
   "implementation-review", "interface-review",

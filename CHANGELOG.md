@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.12
+
+### Fixed
+
+- The workflow part now lists the `agent-model-fallback` skill that skills 0.3.6 added. Without it `grh install workflow` placed the reviewer agents on `model: inherit` but left out the policy and helper their launchers cite. Run `grh install workflow` once after upgrading.
+
 ## v0.1.11
 
 ### Changed
