@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.13
+
+### Changed
+
+- Pins skills 0.3.7: `relais-verified-push`, `worktree-task` (F6) and `tag-release` push with `amont land` from amont 2.0, which refuses a bare `git push` whose push gates have not run ("push refused: … have not run on") and runs them before git connects. A `v*` tag lands with `amont land --tag`. With an older amont, or none, the skills keep their earlier paths. Run `grh install gate workflow` once after upgrading.
+
 ## v0.1.12
 
 ### Fixed
