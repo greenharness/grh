@@ -11,8 +11,8 @@
 # / unknown.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.3.9"
-skills_sha256 = "4d07ca568fa995c50d7052151bebfac8178c4c997baff38f98c9b779f9e6b0c6"
+skills_version = "0.3.10"
+skills_sha256 = "a9622e2238837730087ab0c47442e44074525eb79237fb8ba6cb438987692e90"
 
 [profiles]
 solo = ["gate", "guardrails"]
