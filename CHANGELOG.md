@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.14
+
+### Changed
+
+- Pins amont-agent 3.22.0 (from 3.16.1): a plan's review panel is seated from the file types of the files each phase names, when every phase names one, and from the repositories' areas otherwise, with advice to name them; `adds=` takes `screen` and `contract`. A fresh install with the earlier pin got an amont-agent that refuses those values.
+- Pins skills 0.3.9 (and 0.3.8, never pinned): the plan template asks each phase for the files it touches and for `adds=screen` / `adds=contract` where no file shows them; `plan-review` seats by file type, with the area table as the fallback and the case of an older amont-agent first; the backend reviewer holds a plan seated from its files to both declarations; `worktree-task` builds a Delta brief from the reviewed head (0.3.8). Run `grh install guardrails workflow` once after upgrading.
+
 ## v0.1.13
 
 ### Changed
