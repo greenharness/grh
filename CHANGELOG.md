@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.15
+
+### Changed
+
+- Pins skills 0.3.10: the backend plan reviewer checks a plan's declarations first. When the panel's classes (`areas=`) have no `contract` and the plan adds a module, crate or repository, or changes a contract another repository consumes, it raises a blocking "add `adds=contract`"; for a new screen or flow without `screen`, "add `adds=screen`". It names only values amont-agent accepts. Run `grh install workflow` once after upgrading.
+
 ## v0.1.14
 
 ### Changed
