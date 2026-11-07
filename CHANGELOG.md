@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.16
+
+### Changed
+
+- Pins skills 0.3.11: the plan-review skill binds a seat that a file type earned to its slice of the plan. It runs `plan-sha --block` with the `--slice <role>` that `plan-panel` prints, pastes both stdout lines, re-runs every seat the hook names stale, and knows amont-agent 3.23.0's slice refusals. With an older amont-agent it runs the plain block. Run `grh install workflow` once after upgrading.
+
 ## v0.1.15
 
 ### Changed
