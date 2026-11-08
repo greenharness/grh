@@ -61,7 +61,7 @@ and fall back between the two routes.
 - [x] Phase 1 — routes, retries, cache, message, tests: `src/fetch.rs`,
   `CHANGELOG.md` (`src/skills.rs` needs no change: it downloads through
   `download_verified`)
-- [x] Phase 2 — release grh, then rebase the skills 0.5.0 pin PR (#24)
+- [x] Phase 2 — rebase the skills 0.5.0 pin PR (#24) onto #25, merge both, then release grh 0.1.18
 
 ## Decision log
 
