@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::exit::Exit;
 use crate::manifest::{ExitPair, KeepBinary, RawStatus, Status};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -321,6 +321,54 @@ impl Store {
         self.dir.join("receipt.json")
     }
 
+    /// Rewrite entries recorded under a part's old name (`rename` maps an
+    /// alias to the part's own name) and raise the receipt to `VERSION`,
+    /// whenever the file on disk is older, renames or not: a version-1 file
+    /// left at 1 would be read by grh 0.1.x while holding 0.2-only names.
+    /// Only a command holding this store's lock gets here. The receipt as it
+    /// was is copied to `receipt.json.pre-0.2` first, once: an existing copy
+    /// is kept. Says what it did on stderr, even under `--quiet`.
+    pub fn migrate(&mut self, rename: impl Fn(&str) -> Option<String>) -> Result<(), Exit> {
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for entry in &self.receipt.entries {
+            if let Some(canonical) = rename(&entry.part) {
+                let pair = (entry.part.clone(), canonical);
+                if !renames.contains(&pair) {
+                    renames.push(pair);
+                }
+            }
+        }
+        let original = self.path();
+        let older = self.receipt.version < VERSION;
+        if !original.exists() || (renames.is_empty() && !older) {
+            return Ok(());
+        }
+        let backup = self.dir.join("receipt.json.pre-0.2");
+        if !backup.exists() {
+            let bytes = fs::read(&original)
+                .map_err(|e| Exit::Failed(format!("cannot read {}: {e}", original.display())))?;
+            write_atomic(&backup, &bytes, 0o644)?;
+        }
+        self.receipt.rename_parts(&rename);
+        self.receipt.version = VERSION;
+        self.save()?;
+        let renamed: Vec<String> = renames
+            .iter()
+            .map(|(from, to)| format!("{from} -> {to}"))
+            .collect();
+        let what = if renamed.is_empty() {
+            "no part renamed".to_string()
+        } else {
+            format!("renamed {}", renamed.join(", "))
+        };
+        eprintln!(
+            "migrated {} to version {VERSION}: the old receipt is kept as {}; {what}",
+            original.display(),
+            backup.display(),
+        );
+        Ok(())
+    }
+
     /// The `grh` state directory this store lives in.
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -335,6 +383,10 @@ impl Store {
         let mut text = serde_json::to_string_pretty(&self.receipt)
             .map_err(|e| Exit::Failed(format!("cannot encode the receipt: {e}")))?;
         text.push('\n');
+        // A save that changes nothing leaves the file, and its mtime, alone.
+        if fs::read(self.path()).is_ok_and(|current| current == text.as_bytes()) {
+            return Ok(());
+        }
         write_atomic(&self.path(), text.as_bytes(), 0o644)
     }
 

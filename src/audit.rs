@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::catalog::Catalog;
 use crate::exit::Exit;
-use crate::manifest::{Reading, Status};
+use crate::manifest::Status;
 use crate::owner::{self, Answer};
 
 const RECOMMEND: &str = "recommend";
@@ -104,12 +104,30 @@ fn has_duro(root: &Path) -> bool {
         .any(|deps| deps.keys().any(|n| n.starts_with("@duro-app/")))
 }
 
-/// A status query whose answer is the state word at `path` in printed JSON.
-fn json_status(args: &[&str], path: &[&str]) -> Status {
-    Status {
-        args: args.iter().map(|a| (*a).to_string()).collect(),
-        reading: Reading::Json(path.iter().map(|k| (*k).to_string()).collect()),
-    }
+/// The status query the catalog part carrying binary `bin` declares for a
+/// level: the same query `grh install` and `grh status` run. Found by binary,
+/// so it does not depend on what the catalog calls the part.
+fn declared(cat: &Catalog, bin: &str, repo_level: bool) -> Option<(String, Status)> {
+    let part = cat.parts.iter().find(|p| p.bin() == Some(bin))?;
+    let level = if repo_level {
+        part.repo_level()
+    } else {
+        part.machine()
+    }?;
+    Some((part.bin()?.to_string(), level.status.clone()?))
+}
+
+/// The answer of the declared status query of the part carrying `bin`, run on
+/// the first candidate binary found; unknown when the part, its query or the
+/// binary is missing.
+fn declared_state(cat: &Catalog, bin: &str, repo_level: bool, repo: Option<&Path>) -> Answer {
+    declared(cat, bin, repo_level)
+        .and_then(|(bin, status)| {
+            candidates(&bin)
+                .first()
+                .map(|b| owner::run_status(&status, b, repo))
+        })
+        .unwrap_or(Answer::Unknown)
 }
 
 pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
@@ -135,13 +153,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Hooks.
     let mut hooks: Vec<String> = Vec::new();
-    let amont_state = candidates("amont").first().map_or(Answer::Unknown, |b| {
-        owner::run_status(
-            &json_status(&["list", "--json"], &["installed", "state"]),
-            b,
-            Some(&root),
-        )
-    });
+    let amont_state = declared_state(cat, "amont", true, Some(&root));
     if amont_state == Answer::Present {
         hooks.push("amont".into());
     }
@@ -205,14 +217,8 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         .filter(|p| root.join(p).exists())
         .collect();
     let claude_set_up = !claude_files.is_empty();
-    let doctor = json_status(&["doctor", "--json"], &["integration", "state"]);
-    let state_of = |bin: &str| {
-        candidates(bin)
-            .first()
-            .map_or(Answer::Unknown, |b| owner::run_status(&doctor, b, None))
-    };
-    let guardrails_state = state_of("amont-agent");
-    let router_state = state_of("relais");
+    let guardrails_state = declared_state(cat, "amont-agent", false, None);
+    let router_state = declared_state(cat, "relais", false, None);
     let aval_mcp_registered = candidates("claude").first().is_some_and(|c| {
         Command::new(c)
             .args(["mcp", "get", "aval"])

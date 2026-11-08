@@ -44,6 +44,7 @@ fn canonical(cat: &Catalog, name: &str) -> String {
 
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
+    crate::install::warn_aliases(&ui, cat, &opts.names);
     let only_repo = if opts.repo { Some(git_root()?) } else { None };
     let state_dir = receipt::state_dir()?;
     let mut before = receipt::read_in(&state_dir)?;
@@ -150,6 +151,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
 
     let mut store = Store::open_in(&state_dir)?;
+    store.migrate(|name| cat.name_of_alias(name))?;
     let mut sum = Summary::default();
     let mut failures: Vec<Exit> = Vec::new();
     for part in &todo {

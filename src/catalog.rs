@@ -208,6 +208,17 @@ impl Catalog {
             .map(|p| p.name().to_string())
     }
 
+    /// The notice for a part asked for by an alias, `None` for its own name.
+    pub fn alias_notice(&self, name: &str) -> Option<String> {
+        if self.parts.iter().any(|p| p.name() == name) {
+            return None;
+        }
+        let canonical = self.name_of_alias(name)?;
+        Some(format!(
+            "{name} is now {canonical}: run grh install {canonical}"
+        ))
+    }
+
     /// Parts and profiles named on the command line, expanded, with every
     /// dependency added, in install order (a part after what it needs).
     /// `enhances` are never added.

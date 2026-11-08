@@ -167,11 +167,26 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     }
 }
 
+/// One warning per alias among `names`, naming the part to use instead.
+pub fn warn_aliases(ui: &Ui, cat: &Catalog, names: &[String]) {
+    let mut seen: Vec<&String> = Vec::new();
+    for name in names {
+        if seen.contains(&name) {
+            continue;
+        }
+        seen.push(name);
+        if let Some(notice) = cat.alias_notice(name) {
+            ui.warn(&notice);
+        }
+    }
+}
+
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
     if opts.names.is_empty() {
         return Err(Exit::Usage(listing(cat)));
     }
+    warn_aliases(&ui, cat, &opts.names);
     let parts = cat.resolve(&opts.names).map_err(|Unknown::Name(n)| {
         Exit::Usage(format!("unknown part or profile: {n}\n{}", listing(cat)))
     })?;
@@ -185,7 +200,8 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let store = Store::open()?;
+    let mut store = Store::open()?;
+    store.migrate(|name| cat.name_of_alias(name))?;
     let mut run = Run::new(Some(cat), ui, store, opts.replace, repo, None);
     let mut failures: Vec<Exit> = Vec::new();
     for part in &parts {

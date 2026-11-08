@@ -141,7 +141,7 @@ fn session_block(m: &Manifest) -> serde_json::Value {
     serde_json::json!({ "hooks": { "SessionStart": [ { "hooks": hooks } ] } })
 }
 
-pub fn run(opts: &Opts) -> Result<(), Exit> {
+pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
     let m = Manifest::load(&opts.dir)?;
     let dir = &opts.dir;
@@ -169,7 +169,8 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let store = Store::open()?;
+    let mut store = Store::open()?;
+    store.migrate(|name| catalog.name_of_alias(name))?;
     let mut run = Run::new(None, ui, store, opts.replace, repo, Some(bundle));
     let mut failures: Vec<Exit> = run.part(&part);
     let (ui, mut store, mut sum) = run.into_parts();

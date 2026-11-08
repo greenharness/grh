@@ -150,13 +150,18 @@ fn main() -> ExitCode {
                         "--extension installs one extension; name no parts with it".into(),
                     ))
                 } else {
-                    extension::run(&extension::Opts {
-                        dir,
-                        repo,
-                        replace,
-                        dry_run,
-                        yes,
-                        quiet,
+                    catalog::Catalog::load().and_then(|cat| {
+                        extension::run(
+                            &cat,
+                            &extension::Opts {
+                                dir,
+                                repo,
+                                replace,
+                                dry_run,
+                                yes,
+                                quiet,
+                            },
+                        )
                     })
                 }
             } else {

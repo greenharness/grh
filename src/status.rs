@@ -104,7 +104,8 @@ pub enum Format {
 }
 
 pub fn run(cat: &Catalog, format: Format) -> Result<(), Exit> {
-    let receipt = receipt::read_in(&receipt::state_dir()?)?;
+    let mut receipt = receipt::read_in(&receipt::state_dir()?)?;
+    receipt.rename_parts(|name| cat.name_of_alias(name));
     let repo = git_root().ok();
     let parts: Vec<Value> = cat
         .parts

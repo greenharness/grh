@@ -806,7 +806,7 @@ fn audit_of_an_empty_repo_recommends_solo() {
 }
 
 #[test]
-fn a_receipt_written_under_an_alias_is_read_but_never_rewritten() {
+fn a_receipt_written_under_an_alias_is_read_by_status_and_migrated_by_a_locked_command() {
     let fx = Fx::new();
     let catalog = fs::read_to_string(fx.p("catalog.toml"))
         .unwrap()
@@ -864,7 +864,8 @@ fn a_receipt_written_under_an_alias_is_read_but_never_rewritten() {
 
     let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert_eq!(parts_named(&fx, "gate"), 2, "{}", fx.receipt());
+    assert_eq!(parts_named(&fx, "gate"), 0, "{}", fx.receipt());
+    assert_eq!(parts_named(&fx, "greengate"), 3, "{}", fx.receipt());
     assert!(fx.receipt().contains("binary-adopted"), "{}", fx.receipt());
 
     let o = fx.grh("work", &[], &["uninstall", "greengate", "--yes"]);
@@ -1091,4 +1092,218 @@ fn an_unpinned_manifest_lists_what_it_runs_on_stderr_and_exits_2_without_consent
     assert!(!text.contains("SECRETBODY"), "{text}");
     assert!(!fx.p("fstate/exttool.on").exists());
     assert!(fx.receipt().is_empty());
+}
+
+// --- aliases and the receipt migration ---
+
+/// The fixture catalog with `gate` renamed `greengate`, answering to `gate`.
+fn alias_fx() -> Fx {
+    let fx = Fx::new();
+    let catalog = fs::read_to_string(fx.p("catalog.toml"))
+        .unwrap()
+        .replace("\"gate\"", "\"greengate\"")
+        .replace(
+            "name = \"greengate\"",
+            "name = \"greengate\"\naliases = [\"gate\"]",
+        );
+    put(&fx.p("catalog.toml"), catalog.as_bytes());
+    fx
+}
+
+fn seed_gate_receipt(fx: &Fx) -> String {
+    let bin = fx.p("bin/amont");
+    executable(&bin, FAKE);
+    seed_receipt(
+        fx,
+        &serde_json::json!([{
+            "part": "gate", "level": "machine", "state": "done",
+            "kind": { "binary-adopted": { "path": bin.to_string_lossy() } }
+        }]),
+    );
+    fx.receipt()
+}
+
+#[test]
+fn the_first_locked_command_migrates_the_receipt_once_and_keeps_the_original() {
+    let fx = alias_fx();
+    let original = seed_gate_receipt(&fx);
+    let backup = fx.p("state/grh/receipt.json.pre-0.2");
+
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes", "--quiet"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let notice = err(&o);
+    assert!(notice.contains("receipt.json.pre-0.2"), "{notice}");
+    assert!(notice.contains("gate -> greengate"), "{notice}");
+    let doc: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
+    assert_eq!(doc["version"], 2);
+    assert_eq!(doc["entries"][0]["part"], "greengate");
+    assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+
+    // The second locked command does not migrate again: no notice, the same
+    // receipt, and the backup is never written again (bytes and mtime). The
+    // receipt itself may be written (an install records pending steps), so
+    // its mtime is not the measure.
+    let migrated = fx.receipt();
+    let backup_mtime = fs::metadata(&backup).unwrap().modified().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes", "--quiet"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!err(&o).contains("receipt.json.pre-0.2"), "{}", err(&o));
+    assert_eq!(fx.receipt(), migrated);
+    assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+    assert_eq!(
+        fs::metadata(&backup).unwrap().modified().unwrap(),
+        backup_mtime
+    );
+}
+
+#[test]
+fn a_version_1_receipt_with_no_alias_is_still_raised_to_version_2() {
+    let fx = alias_fx();
+    let bin = fx.p("bin/aval");
+    executable(&bin, FAKE);
+    seed_receipt(
+        &fx,
+        &serde_json::json!([{
+            "part": "decisions", "level": "machine", "state": "done",
+            "kind": { "binary-adopted": { "path": bin.to_string_lossy() } }
+        }]),
+    );
+    let original = fx.receipt();
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let doc: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
+    assert_eq!(doc["version"], 2, "{}", fx.receipt());
+    let backup = fx.p("state/grh/receipt.json.pre-0.2");
+    assert_eq!(fs::read_to_string(&backup).unwrap(), original);
+    assert!(err(&o).contains("no part renamed"), "{}", err(&o));
+}
+
+#[test]
+fn an_existing_pre_0_2_copy_is_never_overwritten() {
+    let fx = alias_fx();
+    seed_gate_receipt(&fx);
+    put(&fx.p("state/grh/receipt.json.pre-0.2"), b"kept\n");
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        fs::read_to_string(fx.p("state/grh/receipt.json.pre-0.2")).unwrap(),
+        "kept\n"
+    );
+}
+
+#[test]
+fn status_under_a_held_lock_exits_0_and_writes_nothing() {
+    let fx = alias_fx();
+    let original = seed_gate_receipt(&fx);
+    fs::create_dir_all(fx.p("state/grh")).unwrap();
+    let lock = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(fx.p("state/grh/receipt.lock"))
+        .unwrap();
+    lock.lock().unwrap();
+    let o = fx.grh("work", &[], &["status", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap();
+    assert_eq!(fx.receipt(), original);
+    assert!(!fx.p("state/grh/receipt.json.pre-0.2").exists());
+}
+
+#[test]
+fn status_json_on_a_version_1_receipt_is_json_and_changes_nothing() {
+    let fx = alias_fx();
+    let original = seed_gate_receipt(&fx);
+    let o = fx.grh("work", &[], &["status", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    serde_json::from_slice::<serde_json::Value>(&o.stdout).unwrap();
+    assert_eq!(fx.receipt(), original);
+}
+
+#[test]
+fn installing_by_an_alias_installs_the_part_and_warns_once() {
+    let fx = alias_fx();
+    let o = fx.grh("work", &[], &["install", "gate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let notice = "gate is now greengate: run grh install greengate";
+    assert_eq!(err(&o).matches(notice).count(), 1, "{}", err(&o));
+    assert!(fx.p("bin/amont").exists());
+    assert!(fx.receipt().contains("greengate"));
+}
+
+#[test]
+fn a_part_run_through_its_alias_warns_before_the_exec_and_keeps_stdout() {
+    let fx = alias_fx();
+    executable(&fx.p("bin/amont"), FAKE);
+    let by_alias = fx.grh("work", &[], &["gate", "--version"]);
+    let by_name = fx.grh("work", &[], &["greengate", "--version"]);
+    assert_eq!(code(&by_alias), 0, "{}", err(&by_alias));
+    assert!(!by_alias.stdout.is_empty());
+    assert_eq!(by_alias.stdout, by_name.stdout);
+    let notice = "gate is now greengate: run grh install greengate";
+    assert_eq!(err(&by_alias).matches(notice).count(), 1);
+    assert!(!err(&by_name).contains(notice));
+}
+
+#[test]
+fn audit_rows_with_the_gate_installed_name_the_parts_as_before() {
+    let fx = Fx::new();
+    git_init(&fx);
+    executable(&fx.p("bin/amont"), FAKE);
+    put(&fx.p("fstate/amont.repo"), b"");
+    let path = format!("{}:/usr/bin:/bin", fx.p("bin").display());
+    let o = fx.grh("work", &[("PATH", &path)], &["audit", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let rows: Vec<(String, String)> = v["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["part"].as_str().unwrap().to_string(),
+                r["verdict"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    let names: Vec<&str> = rows.iter().map(|r| r.0.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "gate",
+            "guardrails",
+            "decisions",
+            "conform",
+            "router",
+            "attest",
+            "workflow",
+            "design"
+        ]
+    );
+    assert_eq!(rows[0].1, "already here", "{rows:?}");
+    assert_eq!(v["install"], "grh install solo");
+}
+
+#[test]
+fn audit_reads_the_gate_state_from_the_catalog_query() {
+    // The same installed fake amont, but the catalog's repo-level status now
+    // reads a JSON path the fake never prints: audit must follow the
+    // catalog, so the gate is no longer "already here".
+    let fx = Fx::new();
+    let catalog = fs::read_to_string(fx.p("catalog.toml")).unwrap().replacen(
+        "[\"installed\", \"state\"]",
+        "[\"nowhere\", \"state\"]",
+        1,
+    );
+    put(&fx.p("catalog.toml"), catalog.as_bytes());
+    git_init(&fx);
+    executable(&fx.p("bin/amont"), FAKE);
+    put(&fx.p("fstate/amont.repo"), b"");
+    let path = format!("{}:/usr/bin:/bin", fx.p("bin").display());
+    let o = fx.grh("work", &[("PATH", &path)], &["audit", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_ne!(v["parts"][0]["verdict"], "already here", "{v}");
 }

@@ -5,6 +5,16 @@ section is missing here.
 
 ## Unreleased
 
+### Changed
+
+- The part `gate` is now `greengate`. `grh install gate`, `grh uninstall gate` and `grh gate ...` still work: each resolves to `greengate` through its alias and prints one warning on stderr, `gate is now greengate: run grh install greengate`. For `grh gate ...` the warning comes before the part runs, so stdout stays the tool's alone.
+- The receipt is version 2. The first command that holds the receipt lock (install, uninstall) copies `receipt.json` to `receipt.json.pre-0.2` (an existing copy is kept, never overwritten), rewrites entries recorded under `gate` to `greengate`, and says so on stderr, even under `--quiet`. `grh status` and `grh audit` never write the receipt: they read an alias in memory. A version 1 receipt still loads. A save that changes nothing no longer touches the file.
+- `grh audit` still names the parts `gate`, `guardrails` and so on in its rows; they move to the new names with the profiles.
+
+### Downgrading to 0.1.19
+
+grh 0.1.19 refuses a version 2 receipt. To go back: run `grh status`, run `grh uninstall` for the parts installed under 0.2.0, install 0.1.19, then restore `receipt.json.pre-0.2` over `receipt.json` (both in `$XDG_STATE_HOME/grh`, else `~/.local/state/grh`).
+
 ## v0.1.19
 
 ### Changed
