@@ -29,6 +29,8 @@ section is missing here.
   file path it would use.
 - The part `gate` is now `greengate`, and `guardrails` is now `greenpiste`. `grh install gate`, `grh uninstall gate` and `grh gate ...` still work: each resolves to `greengate` through its alias and prints one warning on stderr naming the command to use instead, e.g. `gate is now greengate: run grh uninstall greengate`. For `grh gate ...` the warning comes before the part runs, so stdout stays the tool's alone.
 - The receipt is version 2. The first command that holds the receipt lock (install, uninstall) copies `receipt.json` to `receipt.json.pre-0.2` (rewritten from the current file whenever that file is older than version 2, so it always holds the receipt a downgrade needs), rewrites entries recorded under `gate` or `guardrails` to the new names, and says so on stderr, even under `--quiet`. `grh status` and `grh audit` never write the receipt: they read an alias in memory. A version 1 receipt still loads. A save that changes nothing no longer touches the file.
+- The keep-binary check reads a tool's state with the same words as every status query (`installed` counts as present, like `present` and `partial`), so it keeps a binary in more cases, never fewer.
+- Uninstalling a tool whose binary is already gone keeps its receipt entry and says so, instead of running an undo whose result grh cannot check. Reinstall the part, then `grh uninstall` it again.
 - `grh audit` still names the parts `gate`, `guardrails` and so on in its rows; they move to the new names with the profiles.
 
 ### Downgrading to 0.1.19
