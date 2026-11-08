@@ -96,3 +96,12 @@ and fall back between the two routes.
 - Delta fixes (`Location` forms, attempt wording, accept deadline) →
   `make check` exit 0 (31.6 s); `a_location_resolves_or_is_refused`
   covers `https://`, `//host`, `/path` and three refused relative forms.
+
+## Implementation review
+
+- implementation-review: r1 approve-with-changes (5 fixed); delta approve, cache at the entry point ruled fine; deltas 2 and 3 approve. 39k+38k+29k+23k.
+- lang:rust: r1 approve-with-changes (4 fixed); delta (3 fixed) and delta 2 (RFC 3986 scheme) approve-with-changes, all fixed; delta 3 approve. 35k+36k+26k+23k.
+- backend: r1 approve-with-changes (5 fixed); delta approve-with-changes (2 fixed, "in 0 s" kept: test-only); delta 2 approve, carried to the scheme fix. 39k+35k+25k.
+- relais review-fix run lost the per-process cache; corrected by hand, recorded with relais feedback (magnitude 0.1).
+
+Next: Phase 2, merge, then rebase the skills 0.5.0 pin PR (#24) and release grh 0.1.18.
