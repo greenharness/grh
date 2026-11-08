@@ -1,8 +1,11 @@
 //! Download a part's release tarball, verify it against the sha256 pinned in
 //! the catalog, and only then unpack the named binary into the bin dir.
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
@@ -61,25 +64,300 @@ pub fn binary_url(base: &str, repo: &str, bin: &str, version: &str, target: &str
     )
 }
 
-/// Fetch `url` (`http(s)://` or `file://`) into memory.
-pub fn download(url: &str) -> Result<Vec<u8>, Exit> {
-    if let Some(path) = url.strip_prefix("file://") {
-        return std::fs::read(path).map_err(|e| Exit::Failed(format!("cannot read {url}: {e}")));
+/// Attempts per route, the first included.
+const ATTEMPTS: usize = 3;
+const API_DEFAULT: &str = "https://api.github.com";
+
+/// How a download is routed; the token is never printed (no `Debug`).
+struct Routes {
+    token: Option<String>,
+    api_override: Option<String>,
+    backoff: [Duration; 2],
+}
+
+impl Routes {
+    fn from_env() -> Self {
+        let non_empty = |name: &str| std::env::var(name).ok().filter(|v| !v.is_empty());
+        Routes {
+            token: non_empty("GH_TOKEN").or_else(|| non_empty("GITHUB_TOKEN")),
+            api_override: non_empty("GRH_API_BASE"),
+            backoff: [Duration::from_secs(1), Duration::from_secs(4)],
+        }
     }
-    let resp = ureq::get(url)
-        .call()
-        .map_err(|e| Exit::Failed(format!("cannot download {url}: {e}")))?;
+
+    fn api_for(&self, base: &str) -> Option<String> {
+        match &self.api_override {
+            Some(api) => Some(api.trim_end_matches('/').to_string()),
+            None if base == DEFAULT_BASE => Some(API_DEFAULT.to_string()),
+            None => None,
+        }
+    }
+}
+
+/// One failed request: the HTTP status when there was one.
+struct Hit {
+    status: Option<u16>,
+    text: String,
+}
+
+impl Hit {
+    fn retryable(&self) -> bool {
+        self.status.is_none_or(|s| s >= 500 || s == 429)
+    }
+}
+
+/// A route that gave up: its last failure and how many attempts it made.
+struct RouteFailure {
+    hit: Hit,
+    attempts: usize,
+}
+
+impl RouteFailure {
+    fn describe(&self) -> String {
+        let plural = if self.attempts == 1 { "" } else { "s" };
+        format!("{} after {} attempt{plural}", self.hit.text, self.attempts)
+    }
+}
+
+struct ReleaseUrl<'a> {
+    base: &'a str,
+    owner: &'a str,
+    repo: &'a str,
+    tag: &'a str,
+    name: &'a str,
+}
+
+fn parse_release_url(url: &str) -> Option<ReleaseUrl<'_>> {
+    let (head, tail) = url.split_once("/releases/download/")?;
+    let (tag, name) = tail.split_once('/')?;
+    let (rest, repo) = head.rsplit_once('/')?;
+    let (base, owner) = rest.rsplit_once('/')?;
+    let valid = base.starts_with("http") && [tag, name, repo, owner].iter().all(|p| !p.is_empty());
+    (valid && !name.contains('/')).then_some(ReleaseUrl {
+        base,
+        owner,
+        repo,
+        tag,
+        name,
+    })
+}
+
+fn hit_from(error: ureq::Error) -> Hit {
+    match error {
+        ureq::Error::Status(code, _) => Hit {
+            status: Some(code),
+            text: format!("HTTP {code}"),
+        },
+        ureq::Error::Transport(t) => Hit {
+            status: None,
+            text: match t.message() {
+                Some(m) => format!("{}: {m}", t.kind()),
+                None => t.kind().to_string(),
+            },
+        },
+    }
+}
+
+fn io_hit(error: &std::io::Error) -> Hit {
+    Hit {
+        status: None,
+        text: format!("read failed: {}", error.kind()),
+    }
+}
+
+fn agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(Duration::from_secs(15))
+        .timeout(Duration::from_secs(300))
+        .build()
+}
+
+fn get(
+    agent: &ureq::Agent,
+    url: &str,
+    accept: &str,
+    bearer: Option<&str>,
+) -> Result<ureq::Response, Hit> {
+    let mut request = agent.get(url).set("Accept", accept);
+    if let Some(token) = bearer {
+        request = request.set("Authorization", &format!("Bearer {token}"));
+    }
+    request.call().map_err(hit_from)
+}
+
+fn read_limited(resp: ureq::Response) -> Result<Vec<u8>, Hit> {
     let mut buf = Vec::new();
     resp.into_reader()
         .take(MAX_BYTES + 1)
         .read_to_end(&mut buf)
-        .map_err(|e| Exit::Failed(format!("cannot download {url}: {e}")))?;
+        .map_err(|e| io_hit(&e))?;
     if buf.len() as u64 > MAX_BYTES {
-        return Err(Exit::Failed(format!(
-            "{url} is larger than {MAX_BYTES} bytes"
-        )));
+        return Err(Hit {
+            status: None,
+            text: format!("larger than {MAX_BYTES} bytes"),
+        });
     }
     Ok(buf)
+}
+
+/// Follow redirects by hand so `bearer` only ever goes to the first host.
+fn get_following(
+    agent: &ureq::Agent,
+    first: &str,
+    accept: &str,
+    bearer: Option<&str>,
+) -> Result<Vec<u8>, Hit> {
+    let mut url = first.to_string();
+    let mut token = bearer;
+    for _ in 0..5 {
+        let resp = get(agent, &url, accept, token)?;
+        if (300..400).contains(&resp.status()) {
+            let location = resp.header("location").ok_or(Hit {
+                status: Some(resp.status()),
+                text: format!("HTTP {} without a location", resp.status()),
+            })?;
+            url = location.to_string();
+            token = None;
+            continue;
+        }
+        return read_limited(resp);
+    }
+    Err(Hit {
+        status: None,
+        text: "too many redirects".to_string(),
+    })
+}
+
+fn api_once(
+    agent: &ureq::Agent,
+    api: &str,
+    release: &ReleaseUrl<'_>,
+    bearer: Option<&str>,
+) -> Result<Vec<u8>, Hit> {
+    let ReleaseUrl {
+        owner,
+        repo,
+        tag,
+        name,
+        ..
+    } = release;
+    let listing = get_following(
+        agent,
+        &format!("{api}/repos/{owner}/{repo}/releases/tags/{tag}"),
+        "application/vnd.github+json",
+        bearer,
+    )?;
+    let json: serde_json::Value = serde_json::from_slice(&listing).map_err(|_| Hit {
+        status: None,
+        text: "unreadable release listing".to_string(),
+    })?;
+    let id = json["assets"]
+        .as_array()
+        .and_then(|assets| assets.iter().find(|a| a["name"] == *name))
+        .and_then(|asset| asset["id"].as_u64())
+        .ok_or(Hit {
+            status: Some(404),
+            text: "HTTP 404".to_string(),
+        })?;
+    get_following(
+        agent,
+        &format!("{api}/repos/{owner}/{repo}/releases/assets/{id}"),
+        "application/octet-stream",
+        bearer,
+    )
+}
+
+/// Up to `ATTEMPTS` tries of `once`, backing off between transient failures.
+fn with_retries(
+    backoff: &[Duration; 2],
+    mut once: impl FnMut() -> Result<Vec<u8>, Hit>,
+) -> Result<Vec<u8>, RouteFailure> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match once() {
+            Ok(bytes) => return Ok(bytes),
+            Err(hit) if hit.retryable() && attempts < ATTEMPTS => {
+                std::thread::sleep(backoff[attempts - 1]);
+            }
+            Err(hit) => return Err(RouteFailure { hit, attempts }),
+        }
+    }
+}
+
+fn web_route(agent: &ureq::Agent, url: &str, routes: &Routes) -> Result<Vec<u8>, RouteFailure> {
+    with_retries(&routes.backoff, || get_following(agent, url, "*/*", None))
+}
+
+fn api_route(
+    agent: &ureq::Agent,
+    api: &str,
+    release: &ReleaseUrl<'_>,
+    routes: &Routes,
+) -> Result<Vec<u8>, RouteFailure> {
+    let with_token = routes.token.as_deref();
+    let result = with_retries(&routes.backoff, || {
+        api_once(agent, api, release, with_token)
+    });
+    match result {
+        Err(failure) if with_token.is_some() && matches!(failure.hit.status, Some(401 | 403)) => {
+            with_retries(&routes.backoff, || api_once(agent, api, release, None))
+        }
+        other => other,
+    }
+}
+
+fn cache() -> &'static Mutex<HashMap<String, Vec<u8>>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, Vec<u8>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn download_with(url: &str, routes: &Routes) -> Result<Vec<u8>, Exit> {
+    if let Some(path) = url.strip_prefix("file://") {
+        return std::fs::read(path).map_err(|e| Exit::Failed(format!("cannot read {url}: {e}")));
+    }
+    if let Some(bytes) = cache().lock().ok().and_then(|c| c.get(url).cloned()) {
+        return Ok(bytes);
+    }
+    let agent = agent();
+    let release = parse_release_url(url);
+    let api = release.as_ref().and_then(|r| routes.api_for(r.base));
+    let fail = |detail: String| Exit::Failed(format!("cannot download {url} ({detail})"));
+    let outcome = match (&release, &api) {
+        (Some(release), Some(api)) if routes.token.is_some() => {
+            api_route(&agent, api, release, routes).or_else(|api_failure| {
+                web_route(&agent, url, routes).map_err(|web_failure| {
+                    fail(format!(
+                        "API: {}; web fallback: {}",
+                        api_failure.describe(),
+                        web_failure.describe()
+                    ))
+                })
+            })
+        }
+        (Some(release), Some(api)) => web_route(&agent, url, routes).or_else(|web_failure| {
+            api_route(&agent, api, release, routes).map_err(|api_failure| {
+                fail(format!(
+                    "{}; API fallback: {}",
+                    web_failure.describe(),
+                    api_failure.describe()
+                ))
+            })
+        }),
+        _ => web_route(&agent, url, routes).map_err(|failure| fail(failure.describe())),
+    };
+    let bytes = outcome?;
+    if let Ok(mut c) = cache().lock() {
+        c.insert(url.to_string(), bytes.clone());
+    }
+    Ok(bytes)
+}
+
+/// Fetch `url` (`http(s)://` or `file://`) into memory; a GitHub release
+/// URL is retried and falls back between the web and API routes.
+pub fn download(url: &str) -> Result<Vec<u8>, Exit> {
+    download_with(url, &Routes::from_env())
 }
 
 /// Download `url` and check it against `pin`; nothing is returned on a mismatch.
@@ -302,5 +580,170 @@ mod tests {
         let got = download(&format!("http://127.0.0.1:{port}/x")).unwrap();
         h.join().unwrap();
         assert_eq!(got, body);
+    }
+
+    type Reply = (u16, Vec<(String, String)>, Vec<u8>);
+
+    /// A local server answering from `handler(path, head)`; returns its port
+    /// and the heads it received.
+    fn spawn(
+        handler: impl Fn(&str, &str) -> Reply + Send + 'static,
+    ) -> (u16, std::sync::Arc<Mutex<Vec<String>>>) {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::sync::Arc::new(Mutex::new(Vec::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut s) = stream else { break };
+                let mut head = Vec::new();
+                let mut byte = [0u8; 1];
+                while !head.ends_with(b"\r\n\r\n") && s.read(&mut byte).unwrap_or(0) == 1 {
+                    head.push(byte[0]);
+                }
+                let head = String::from_utf8_lossy(&head).into_owned();
+                let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
+                log.lock().unwrap().push(head.clone());
+                let (status, headers, body) = handler(&path, &head);
+                let mut out = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n",
+                    body.len()
+                );
+                for (k, v) in headers {
+                    out.push_str(&format!("{k}: {v}\r\n"));
+                }
+                out.push_str("\r\n");
+                let _ = s.write_all(out.as_bytes()); // the client may have hung up
+                let _ = s.write_all(&body); // the client may have hung up
+            }
+        });
+        (port, seen)
+    }
+
+    fn routes(token: Option<&str>, port: u16) -> Routes {
+        Routes {
+            token: token.map(str::to_string),
+            api_override: Some(format!("http://127.0.0.1:{port}/api")),
+            backoff: [Duration::from_millis(1), Duration::from_millis(1)],
+        }
+    }
+
+    fn listing() -> Reply {
+        (
+            200,
+            vec![],
+            br#"{"assets":[{"name":"x.tgz","id":7}]}"#.to_vec(),
+        )
+    }
+
+    fn count(seen: &Mutex<Vec<String>>, needle: &str) -> usize {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter(|h| h.contains(needle))
+            .count()
+    }
+
+    #[test]
+    fn a_failing_web_route_falls_back_to_the_api() {
+        let (port, seen) = spawn(|path, _| match path {
+            "/api/repos/o/r/releases/tags/v1" => listing(),
+            "/api/repos/o/r/releases/assets/7" => (200, vec![], b"BYTES".to_vec()),
+            _ => (504, vec![], vec![]),
+        });
+        let url = format!("http://127.0.0.1:{port}/o/r/releases/download/v1/x.tgz");
+        let got = download_with(&url, &routes(None, port)).unwrap();
+        assert_eq!(got, b"BYTES");
+        assert_eq!(count(&seen, "GET /o/r/releases/download"), 3);
+    }
+
+    #[test]
+    fn a_404_is_requested_once_per_route_and_the_error_names_the_url_once() {
+        let (port, seen) = spawn(|_, _| (404, vec![], vec![]));
+        let url = format!("http://127.0.0.1:{port}/o/r/releases/download/v1/y.tgz");
+        let Err(Exit::Failed(m)) = download_with(&url, &routes(None, port)) else {
+            panic!("expected a failure");
+        };
+        assert_eq!(count(&seen, "GET /o/r/releases/download"), 1);
+        assert_eq!(count(&seen, "GET /api/repos/o/r/releases/tags/v1"), 1);
+        assert_eq!(m.matches(&url).count(), 1, "{m}");
+        assert_eq!(
+            m,
+            format!(
+                "cannot download {url} (HTTP 404 after 1 attempt; API fallback: HTTP 404 after 1 attempt)"
+            )
+        );
+    }
+
+    #[test]
+    fn exhausted_retries_are_reported() {
+        let (port, _) = spawn(|_, _| (504, vec![], vec![]));
+        let url = format!("http://127.0.0.1:{port}/o/r/releases/download/v1/z.tgz");
+        let Err(Exit::Failed(m)) = download_with(&url, &routes(None, port)) else {
+            panic!("expected a failure");
+        };
+        assert!(
+            m.ends_with("(HTTP 504 after 3 attempts; API fallback: HTTP 504 after 3 attempts)"),
+            "{m}"
+        );
+    }
+
+    #[test]
+    fn the_token_goes_to_the_api_host_only() {
+        let (blob_port, blob_seen) = spawn(|_, _| (200, vec![], b"BLOB".to_vec()));
+        let (port, seen) = spawn(move |path, _| match path {
+            "/api/repos/o/r/releases/tags/v1" => listing(),
+            "/api/repos/o/r/releases/assets/7" => (
+                302,
+                vec![(
+                    "Location".to_string(),
+                    format!("http://127.0.0.1:{blob_port}/blob"),
+                )],
+                vec![],
+            ),
+            _ => (504, vec![], vec![]),
+        });
+        let url = format!("http://127.0.0.1:{port}/o/r/releases/download/v1/x.tgz");
+        let got = download_with(&url, &routes(Some("sekret"), port)).unwrap();
+        assert_eq!(got, b"BLOB");
+        let first = seen.lock().unwrap()[0].clone();
+        assert!(
+            first.contains("GET /api/repos/o/r/releases/tags/v1"),
+            "{first}"
+        );
+        assert!(first
+            .to_lowercase()
+            .contains("authorization: bearer sekret"));
+        for head in blob_seen.lock().unwrap().iter() {
+            assert!(!head.to_lowercase().contains("authorization"), "{head}");
+        }
+    }
+
+    #[test]
+    fn a_401_with_a_token_retries_the_api_anonymously() {
+        let (port, seen) = spawn(|path, head| {
+            let authed = head.to_lowercase().contains("authorization");
+            match path {
+                "/api/repos/o/r/releases/tags/v1" if authed => (401, vec![], vec![]),
+                "/api/repos/o/r/releases/tags/v1" => listing(),
+                "/api/repos/o/r/releases/assets/7" => (200, vec![], b"ANON".to_vec()),
+                _ => (504, vec![], vec![]),
+            }
+        });
+        let url = format!("http://127.0.0.1:{port}/o/r/releases/download/v1/x.tgz");
+        let got = download_with(&url, &routes(Some("sekret"), port)).unwrap();
+        assert_eq!(got, b"ANON");
+        assert_eq!(count(&seen, "GET /api/repos/o/r/releases/tags/v1"), 2);
+    }
+
+    #[test]
+    fn the_same_url_is_fetched_once_per_process() {
+        let (port, seen) = spawn(|_, _| (200, vec![], b"ONCE".to_vec()));
+        let url = format!("http://127.0.0.1:{port}/plain/file.bin");
+        let r = routes(None, port);
+        assert_eq!(download_with(&url, &r).unwrap(), b"ONCE");
+        assert_eq!(download_with(&url, &r).unwrap(), b"ONCE");
+        assert_eq!(seen.lock().unwrap().len(), 1);
     }
 }
