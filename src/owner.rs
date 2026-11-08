@@ -301,10 +301,15 @@ mod tests {
 
     #[test]
     fn keep_binary_reads_installed_as_present_like_every_status_reader() {
-        // `parse_state`'s vocabulary: `installed` means present, so a shim
-        // with no binary named keeps the binary as it does for `present`.
-        let t = keep_with(0, r#"{"state":"installed","shims":[]}"#, "/x/tool");
-        assert!(is_keep(&t, "unknown"), "{t:?}");
+        // `parse_state`'s vocabulary: `installed` means present. With no shim
+        // baking the placed binary it may go; were `installed` not read as
+        // present, the state would be unknown and the binary kept.
+        let t = keep_with(
+            0,
+            r#"{"state":"installed","shims":[{"binary":"/y/tool"}]}"#,
+            "/x/tool",
+        );
+        assert!(matches!(t, Template::Gone), "{t:?}");
     }
 
     #[test]
