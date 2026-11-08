@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: fix/download-fallback
 repos: [grh]
 adrs: []
@@ -61,7 +61,7 @@ and fall back between the two routes.
 - [x] Phase 1 — routes, retries, cache, message, tests: `src/fetch.rs`,
   `CHANGELOG.md` (`src/skills.rs` needs no change: it downloads through
   `download_verified`)
-- [ ] Phase 2 — release grh, then rebase the skills 0.5.0 pin PR (#24)
+- [x] Phase 2 — rebase the skills 0.5.0 pin PR (#24) onto #25, merge both, then release grh 0.1.18
 
 ## Decision log
 
@@ -104,4 +104,8 @@ and fall back between the two routes.
 - backend: r1 approve-with-changes (5 fixed); delta approve-with-changes (2 fixed, "in 0 s" kept: test-only); delta 2 approve, carried to the scheme fix. 39k+35k+25k.
 - relais review-fix run lost the per-process cache; corrected by hand, recorded with relais feedback (magnitude 0.1).
 
-Next: Phase 2, merge, then rebase the skills 0.5.0 pin PR (#24) and release grh 0.1.18.
+## Outcome
+
+- 2026-11-08: #25 merged (`d1275d7`), the skills 0.5.0 pin (#24) rebased onto it and merged (`3dd74ab`), released as grh v0.1.18 (release run 42470276394, success; the x86_64-apple-darwin asset matches `SHA256SUMS` and reports `grh 0.1.18`).
+- Laptop: `brew upgrade fredericrous/tap/grh` → 0.1.18; `grh install workflow --yes` during the outage → the skills tarball got HTTP 504 on attempts 1–3 of the web route, then "web route failed, trying the API route", then `✓ workflow: 77 skill and agent files`.
+- Follow-up, not in this plan: CI's `deny` job (EmbarkStudios/cargo-deny-action) downloads cargo-deny from the same web route and failed twice on it.
