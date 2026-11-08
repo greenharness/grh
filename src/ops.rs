@@ -104,6 +104,13 @@ impl Summary {
         self.backups.push(line(what, next));
     }
 
+    /// Take over everything `other` collected.
+    pub fn merge(&mut self, other: Summary) {
+        self.gaps.extend(other.gaps);
+        self.skipped.extend(other.skipped);
+        self.backups.extend(other.backups);
+    }
+
     /// Printed on stderr even when quiet; nothing when there is nothing.
     pub fn print(&self, ui: &Ui) {
         let sections = [
@@ -255,15 +262,44 @@ pub fn on_path(name: &str) -> bool {
 
 /// The binary the receipt records for `part`: its path and whether grh placed it.
 pub fn recorded_bin(receipt: &Receipt, part: &Part) -> Option<(PathBuf, bool)> {
+    recorded_bin_where(receipt, |recorded| part.answers_to(recorded))
+}
+
+/// The binary the receipt records under a part name `belongs` accepts.
+pub fn recorded_bin_where(
+    receipt: &Receipt,
+    belongs: impl Fn(&str) -> bool,
+) -> Option<(PathBuf, bool)> {
     receipt
         .entries
         .iter()
-        .filter(|e| part.answers_to(&e.part) && e.level == Level::Machine)
+        .filter(|e| belongs(&e.part) && e.level == Level::Machine)
         .find_map(|e| match &e.kind {
             Kind::BinaryPlaced { path, .. } => Some((PathBuf::from(path), true)),
             Kind::BinaryAdopted { path } => Some((PathBuf::from(path), false)),
             _ => None,
         })
+}
+
+/// One word of a command line as a POSIX shell reads it back unchanged.
+pub fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+/// A command as one line, each argument shell-quoted.
+pub fn command_line(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// The part's binary: the receipt's, else the first on PATH or in grh's bin dir.

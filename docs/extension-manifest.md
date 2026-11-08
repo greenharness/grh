@@ -53,3 +53,9 @@ The catalog's `[[part]]` entries are manifests of this same type. v2 adds the fo
 - `[tool.keep_binary]`: `args`, `state` (JSON path), `absent`, `shims` (JSON path), `binary`, `warning`: when a placed binary must stay.
 - `[[repo_file]]`: `dirs` (the first that exists in the repository, else the last), `path`, `content`; relative and inside the repository.
 - `[bundle]`: `skills`, `agents` taken from grh's pinned skills bundle.
+
+## What `--extension` shows and records
+
+A manifest the catalog does not pin installs through the same path as a catalog part, so it may carry a `[tool]`. Before asking for consent, grh prints on stderr, even under `--quiet`, the binary a `[tool.release]` would download (its repository and version, which the same manifest supplies with its sha256), every command it would run (doctor commands included), (install, uninstall, status, keep-binary) one per line with shell-quoted arguments, every `[[repo_file]]` path (not its content) and every `requires` entry. Off a terminal without `--yes` it then exits 2 and changes nothing. `--repo` allows `[[repo_file]]` and `[tool.repo_level]`; a repo file is written only inside the repository (no `..`, no absolute path, no link that leaves it).
+
+The level's `status` and the `keep_binary` spec are recorded in the receipt at install time, so uninstall undoes the tool and confirms it absent after the extension directory is gone.

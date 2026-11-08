@@ -876,3 +876,219 @@ fn a_receipt_written_under_an_alias_is_read_but_never_rewritten() {
         "the skill recorded under `gate` was left behind"
     );
 }
+
+// --- a manifest's own data drives the install path ---
+
+fn stripped_of_recorded_specs(fx: &Fx) {
+    let mut doc: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
+    for entry in doc["entries"].as_array_mut().unwrap() {
+        if let Some(tool) = entry["kind"]
+            .get_mut("tool-install")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            tool.remove("status");
+            tool.remove("keep_binary");
+        }
+    }
+    put(&fx.p("state/grh/receipt.json"), doc.to_string().as_bytes());
+}
+
+#[test]
+fn uninstall_of_an_entry_written_by_0_1_x_takes_its_spec_from_the_catalog() {
+    let fx = Fx::new();
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "guardrails", "--yes"])),
+        0
+    );
+    assert!(fx.receipt().contains("\"status\""), "{}", fx.receipt());
+    stripped_of_recorded_specs(&fx);
+    assert!(!fx.receipt().contains("\"status\""));
+    let o = fx.grh("work", &[], &["uninstall", "guardrails", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+    assert!(!fx.p("fstate/amont-agent.machine").exists());
+    assert!(fx.files("bin").is_empty());
+}
+
+#[test]
+fn a_missing_requires_leaves_a_gap_naming_the_command_and_the_rerun() {
+    let fx = Fx::new();
+    fs::remove_file(fx.p("fakes/claude")).unwrap();
+    let o = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let text = err(&o);
+    assert!(text.contains("claude is not on PATH"), "{text}");
+    assert!(text.contains("grh install guardrails"), "{text}");
+}
+
+#[test]
+fn attest_workflow_is_placed_from_the_manifest_with_backup_rules() {
+    let fx = Fx::new();
+    git_init(&fx);
+    let o = fx.grh("work", &[], &["install", "attest", "--repo", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let file = fx.p("work/.forgejo/workflows/attest.yml");
+    assert!(
+        !file.exists() || fs::read_to_string(&file).unwrap() == ATTEST_BYTES,
+        "unexpected content"
+    );
+    let placed = if file.exists() {
+        file
+    } else {
+        fx.p("work/.github/workflows/attest.yml")
+    };
+    assert_eq!(fs::read_to_string(&placed).unwrap(), ATTEST_BYTES);
+    // Someone edits it: grh leaves it, then backs it up under --replace.
+    fs::write(&placed, "edited\n").unwrap();
+    let o = fx.grh("work", &[], &["install", "attest", "--repo", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fs::read_to_string(&placed).unwrap(), "edited\n");
+    assert!(
+        err(&o).contains("grh install attest --repo --replace"),
+        "{}",
+        err(&o)
+    );
+    let o = fx.grh(
+        "work",
+        &[],
+        &["install", "attest", "--repo", "--replace", "--yes"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fs::read_to_string(&placed).unwrap(), ATTEST_BYTES);
+    assert_eq!(fx.files("state/grh/backup").len(), 1);
+}
+
+#[test]
+fn a_repo_file_through_a_link_out_of_the_repository_is_refused() {
+    let fx = Fx::new();
+    git_init(&fx);
+    fs::create_dir_all(fx.p("outside")).unwrap();
+    std::os::unix::fs::symlink(fx.p("outside"), fx.p("work/.forgejo")).unwrap();
+    let o = fx.grh("work", &[], &["install", "attest", "--repo", "--yes"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("outside the repository"), "{}", err(&o));
+    assert!(fx.files("outside").is_empty());
+    assert!(!fx.receipt().contains("attest.yml"));
+}
+
+#[test]
+fn a_repo_file_path_with_dotdot_or_absolute_is_refused() {
+    for path in ["../escape.yml", "/tmp/escape.yml"] {
+        let fx = Fx::new();
+        git_init(&fx);
+        put(
+            &fx.p("ext/greenharness.toml"),
+            format!(
+                "[extension]\nname = \"x\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\n\
+                 [[repo_file]]\ndirs = [\".github\"]\npath = \"{path}\"\ncontent = \"x\"\n"
+            )
+            .as_bytes(),
+        );
+        let dir = fx.p("ext").to_string_lossy().into_owned();
+        let o = fx.grh(
+            "work",
+            &[],
+            &["install", "--extension", &dir, "--repo", "--yes"],
+        );
+        assert_ne!(code(&o), 0, "{path}: {}", err(&o));
+        assert!(!fx.p("work/escape.yml").exists());
+        assert!(!fx.receipt().contains("escape.yml"));
+    }
+}
+
+const TOOL_EXT: &str = r#"#!/bin/sh
+echo "exttool $*" >> "$FAKE_LOG"
+mkdir -p "$FAKE_STATE"
+case "$1" in
+  install) touch "$FAKE_STATE/exttool.on";;
+  uninstall) rm -f "$FAKE_STATE/exttool.on";;
+  status) [ -f "$FAKE_STATE/exttool.on" ] && exit 0; exit 1;;
+esac
+exit 0
+"#;
+
+fn tool_extension(fx: &Fx, extra: &str) -> String {
+    executable(&fx.p("fakes/exttool"), TOOL_EXT);
+    put(
+        &fx.p("ext/greenharness.toml"),
+        format!(
+            "[extension]\nname = \"withtool\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\n\
+             [tool]\nbin = \"exttool\"\n[tool.machine]\n\
+             install = [\"{{bin}}\", \"install\", \"a b\"]\nuninstall = [\"{{bin}}\", \"uninstall\"]\n\
+             {extra}[tool.machine.status]\nargs = [\"status\"]\nexit = {{ present = 0, absent = 1 }}\n"
+        )
+        .as_bytes(),
+    );
+    fx.p("ext").to_string_lossy().into_owned()
+}
+
+#[test]
+fn an_extension_with_a_tool_installs_and_uninstalls_without_its_directory() {
+    let fx = Fx::new();
+    let dir = tool_extension(&fx, "");
+    let o = fx.grh("work", &[], &["install", "--extension", &dir, "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.p("fstate/exttool.on").exists());
+    assert!(fx.receipt().contains("\"status\""), "{}", fx.receipt());
+    fs::remove_dir_all(fx.p("ext")).unwrap();
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.log().contains("exttool uninstall"), "{}", fx.log());
+    assert!(!fx.p("fstate/exttool.on").exists());
+    assert!(!fx.receipt().contains("tool-install"), "{}", fx.receipt());
+}
+
+#[test]
+fn an_extension_whose_tool_was_present_leaves_no_entry_after_uninstall() {
+    let fx = Fx::new();
+    let dir = tool_extension(&fx, "");
+    put(&fx.p("fstate/exttool.on"), b"");
+    let o = fx.grh("work", &[], &["install", "--extension", &dir, "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(fx.receipt().contains("ext:"), "{}", fx.receipt());
+    let o = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!fx.receipt().contains("ext:"), "{}", fx.receipt());
+    assert!(fx.p("fstate/exttool.on").exists());
+}
+
+#[test]
+fn an_unpinned_manifest_lists_what_it_runs_on_stderr_and_exits_2_without_consent() {
+    let fx = Fx::new();
+    let dir = tool_extension(&fx, "requires = [\"somecli\"]\n");
+    put(
+        &fx.p("ext/greenharness.toml"),
+        format!(
+            "{}\n[[repo_file]]\ndirs = [\".github\"]\npath = \"workflows/x.yml\"\ncontent = \"SECRETBODY\"\n",
+            fs::read_to_string(fx.p("ext/greenharness.toml")).unwrap()
+        )
+        .replace("SECRETBODY\"\n", "SECRETBODY\"\n\n[[doctor]]\ncommand = \"exttool check\"\n")
+        .replace(
+            "[[doctor]]",
+            "[tool.release]\nrepo = \"someone/exttool\"\nversion = \"9.9.9\"\n\
+             [tool.release.sha256]\n\
+             aarch64-apple-darwin = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             x86_64-apple-darwin = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             aarch64-unknown-linux-gnu = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\
+             x86_64-unknown-linux-gnu = \"0000000000000000000000000000000000000000000000000000000000000000\"\n\n[[doctor]]",
+        )
+        .as_bytes(),
+    );
+    let o = fx.grh("work", &[], &["install", "--extension", &dir, "--quiet"]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    let text = err(&o);
+    assert!(text.contains("exttool install 'a b'"), "{text}");
+    assert!(text.contains("exttool uninstall"), "{text}");
+    assert!(text.contains("exttool status"), "{text}");
+    assert!(text.contains(".github/workflows/x.yml"), "{text}");
+    assert!(text.contains("somecli"), "{text}");
+    assert!(text.contains("doctor:"), "{text}");
+    assert!(text.contains("exttool check"), "{text}");
+    assert!(
+        text.contains("download: exttool 9.9.9 from github.com/someone/exttool"),
+        "{text}"
+    );
+    assert!(!text.contains("SECRETBODY"), "{text}");
+    assert!(!fx.p("fstate/exttool.on").exists());
+    assert!(fx.receipt().is_empty());
+}

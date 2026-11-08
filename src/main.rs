@@ -152,6 +152,7 @@ fn main() -> ExitCode {
                 } else {
                     extension::run(&extension::Opts {
                         dir,
+                        repo,
                         replace,
                         dry_run,
                         yes,

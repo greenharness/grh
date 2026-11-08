@@ -7,13 +7,15 @@ use crate::catalog::{Catalog, Part, Unknown};
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
-use crate::manifest::{RepoFile, ToolLevel};
+use crate::manifest::{stays_inside, RepoFile, ToolLevel};
 use crate::ops::{
-    absolute, confirm, git_root, listing, on_path, recorded_bin, run_tool, same_scope, subst, text,
-    worst_of, Consent, Summary, Ui,
+    absolute, command_line, confirm, git_root, listing, on_path, recorded_bin, run_tool,
+    same_scope, subst, text, worst_of, Consent, Summary, Ui,
 };
 use crate::owner::{self, Answer};
-use crate::receipt::{write_atomic, Entry, Kind, Level, State, Store};
+use crate::receipt::{
+    write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
+};
 use crate::skills::{self, Bundle};
 
 #[derive(Debug, Default)]
@@ -26,15 +28,102 @@ pub struct Opts {
     pub quiet: bool,
 }
 
-struct Run<'a> {
-    cat: &'a Catalog,
-    ui: Ui,
-    store: Store,
-    sum: Summary,
+/// One install in progress: the receipt it writes and what it reports.
+#[derive(Debug)]
+pub struct Run<'a> {
+    cat: Option<&'a Catalog>,
+    pub ui: Ui,
+    pub store: Store,
+    pub sum: Summary,
     replace: bool,
     repo: Option<PathBuf>,
     bundle: Option<Result<Bundle, String>>,
-    claude: bool,
+}
+
+/// What the person is shown before agreeing to a manifest the catalog does
+/// not pin: the binary it would download (from a repository and version the
+/// same manifest names, checked against a sha256 it also supplies), every
+/// command it would run, every file path it would write and every host
+/// command it needs. On stderr, even under `--quiet`.
+pub fn show_commands(part: &Part) {
+    let line = |what: &str, argv: &[String]| {
+        eprintln!("  {what}: {}", command_line(argv));
+    };
+    let bin = part.bin().map(|b| b.to_string());
+    let tool_bin = |argv: &[String]| -> Vec<String> {
+        argv.iter()
+            .map(|a| a.replace("{bin}", bin.as_deref().unwrap_or("{bin}")))
+            .collect()
+    };
+    eprintln!(
+        "{} is not pinned by grh's catalog; it would run:",
+        part.name()
+    );
+    if let Some(release) = part.release() {
+        eprintln!(
+            "  download: {} {} from github.com/{} (when it is not already on PATH)",
+            bin.as_deref().unwrap_or("{bin}"),
+            release.version,
+            release.repo
+        );
+    }
+    for (level, spec) in [("machine", part.machine()), ("repo", part.repo_level())] {
+        let Some(spec) = spec else { continue };
+        line(&format!("{level} install"), &tool_bin(&spec.install));
+        line(&format!("{level} uninstall"), &tool_bin(&spec.uninstall));
+        if let Some(status) = &spec.status {
+            let mut argv = vec![bin.clone().unwrap_or_default()];
+            argv.extend(status.args.iter().cloned());
+            line(&format!("{level} status"), &argv);
+        }
+        for need in &spec.requires {
+            eprintln!(
+                "  {level} requires: {}",
+                command_line(std::slice::from_ref(need))
+            );
+        }
+    }
+    if let Some(keep) = part.keep_binary() {
+        let mut argv = vec![bin.clone().unwrap_or_default()];
+        argv.extend(keep.args.iter().cloned());
+        line("keep-binary", &argv);
+    }
+    for check in &part.doctor {
+        line("doctor", std::slice::from_ref(&check.command));
+    }
+    for file in &part.repo_file {
+        for dir in &file.dirs {
+            eprintln!(
+                "  repo file: {}",
+                command_line(&[format!("{dir}/{}", file.path)])
+            );
+        }
+    }
+}
+
+impl<'a> Run<'a> {
+    pub fn into_parts(self) -> (Ui, Store, Summary) {
+        (self.ui, self.store, self.sum)
+    }
+
+    pub fn new(
+        cat: Option<&'a Catalog>,
+        ui: Ui,
+        store: Store,
+        replace: bool,
+        repo: Option<PathBuf>,
+        bundle: Option<Bundle>,
+    ) -> Run<'a> {
+        Run {
+            cat,
+            ui,
+            store,
+            sum: Summary::default(),
+            replace,
+            repo,
+            bundle: bundle.map(Ok),
+        }
+    }
 }
 
 fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
@@ -97,16 +186,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
     let store = Store::open()?;
-    let mut run = Run {
-        cat,
-        ui,
-        store,
-        sum: Summary::default(),
-        replace: opts.replace,
-        repo,
-        bundle: None,
-        claude: on_path("claude"),
-    };
+    let mut run = Run::new(Some(cat), ui, store, opts.replace, repo, None);
     let mut failures: Vec<Exit> = Vec::new();
     for part in &parts {
         run.ui.say(part.name());
@@ -121,7 +201,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
 
 impl Run<'_> {
     /// Install one part; every failure is reported and returned.
-    fn part(&mut self, part: &Part) -> Vec<Exit> {
+    pub fn part(&mut self, part: &Part) -> Vec<Exit> {
         let mut failures: Vec<Exit> = Vec::new();
         let mut note = |ui: &Ui, e: Exit| {
             ui.fail(&format!("{}: {}", part.name(), text(&e)));
@@ -175,10 +255,9 @@ impl Run<'_> {
     /// The part's binary: the receipt's, else one on PATH (adopted), else
     /// fetched and placed.
     fn binary(&mut self, part: &Part) -> Result<PathBuf, Exit> {
-        let (Some(name), Some(release)) = (part.bin(), part.release()) else {
+        let Some(name) = part.bin() else {
             return Err(Exit::Failed(format!("{} names no binary", part.name())));
         };
-        let (repo, version) = (&release.repo, &release.version);
         if let Some((path, placed)) = recorded_bin(&self.store.receipt, part) {
             let done = self.store.receipt.entries.iter().any(|e| {
                 part.answers_to(&e.part)
@@ -223,6 +302,16 @@ impl Run<'_> {
             self.ui.ok(&format!("{name}: adopted {}", path.display()));
             return Ok(path);
         }
+        let Some(release) = part.release() else {
+            return Err(Exit::Failed(format!(
+                "{name} is not on PATH and {} names no release to fetch it from",
+                part.name()
+            )));
+        };
+        let (repo, version) = (&release.repo, &release.version);
+        let keep_binary = part
+            .keep_binary()
+            .map(|spec| Box::new(RecordedKeepBinary::from(spec)));
         let dir = dispatch::bin_dir().map(|d| absolute(&d)).ok_or_else(|| {
             Exit::Failed("cannot find a bin directory: set HOME or GRH_BIN_DIR".into())
         })?;
@@ -231,6 +320,7 @@ impl Run<'_> {
             Kind::BinaryPlaced {
                 path: dir.join(name).to_string_lossy().into_owned(),
                 sha256: String::new(),
+                keep_binary: keep_binary.clone(),
             },
         ))?;
         self.ui.say(&format!("  fetching {name} {version}"));
@@ -246,6 +336,7 @@ impl Run<'_> {
         self.store.receipt.entries[idx].kind = Kind::BinaryPlaced {
             path: placed.path.to_string_lossy().into_owned(),
             sha256: placed.sha256,
+            keep_binary,
         };
         self.store.done(idx)?;
         self.ui
@@ -268,15 +359,19 @@ impl Run<'_> {
         let Some(idx) = found else {
             return Ok(None);
         };
-        let Kind::BinaryPlaced { path, .. } = &self.store.receipt.entries[idx].kind else {
+        let Kind::BinaryPlaced {
+            path, keep_binary, ..
+        } = &self.store.receipt.entries[idx].kind
+        else {
             return Ok(None);
         };
-        let path = path.clone();
+        let (path, keep_binary) = (path.clone(), keep_binary.clone());
         let bytes =
             std::fs::read(&path).map_err(|e| Exit::Failed(format!("cannot read {path}: {e}")))?;
         self.store.receipt.entries[idx].kind = Kind::BinaryPlaced {
             path: path.clone(),
             sha256: sha256_hex(&bytes),
+            keep_binary,
         };
         self.store.done(idx)?;
         Ok(Some(PathBuf::from(path)))
@@ -297,16 +392,18 @@ impl Run<'_> {
             "repo"
         };
         let name = part.name();
-        // Every machine-level integration is a Claude Code one (an MCP server,
-        // a hook, a plugin): without `claude` it cannot be placed or queried,
-        // and saying so beats reporting its state as unknown.
-        if level == Level::Machine && !self.claude {
+        // A host command the level needs (a CLI it registers with) must be
+        // on PATH: without it the level can be neither placed nor queried.
+        if let Some(missing) = integ.requires.iter().find(|c| !on_path(c)) {
             self.sum.gap(
-                &format!("{name}: claude is not on PATH, so its Claude Code integration was not installed"),
-                &format!("install Claude Code, then grh install {name}"),
+                &format!(
+                    "{name}: {missing} is not on PATH, so its {which} integration was not installed"
+                ),
+                &format!("install {missing}, then grh install {name}"),
             );
-            self.ui
-                .warn(&format!("{name}: claude not found, integration skipped"));
+            self.ui.warn(&format!(
+                "{name}: {missing} not found, {which} integration skipped"
+            ));
             return Ok(());
         }
         let answer = owner::level_state(integ, bin, repo);
@@ -388,6 +485,7 @@ impl Run<'_> {
                 let kind = Kind::ToolInstall {
                     argv: argv.clone(),
                     undo_argv,
+                    status: integ.status.as_ref().map(RecordedStatus::from),
                 };
                 let entry = match repo {
                     Some(r) => Entry::in_repo(name, r, kind),
@@ -414,7 +512,10 @@ impl Run<'_> {
 
     fn place_skills(&mut self, part: &Part) -> Result<(), Exit> {
         if self.bundle.is_none() {
-            self.bundle = Some(Bundle::fetch(self.cat).map_err(|e| text(&e)));
+            self.bundle = Some(match self.cat {
+                Some(cat) => Bundle::fetch(cat).map_err(|e| text(&e)),
+                None => Err(format!("{} names no skills bundle to fetch", part.name())),
+            });
         }
         let bundle = match &self.bundle {
             Some(Ok(b)) => b,
@@ -454,10 +555,11 @@ impl Run<'_> {
         let Some(repo) = self.repo.clone() else {
             self.sum.gap(
                 &format!(
-                    "{}: the CI workflow is written inside a repository",
-                    part.name()
+                    "{}: {} is written inside a repository",
+                    part.name(),
+                    file.path
                 ),
-                "grh install attest --repo, from the repository",
+                &format!("grh install {} --repo, from the repository", part.name()),
             );
             return Ok(());
         };
@@ -467,7 +569,7 @@ impl Run<'_> {
             .find(|d| repo.join(d).is_dir())
             .or(file.dirs.last())
             .ok_or_else(|| Exit::Failed(format!("{} lists no directory", file.path)))?;
-        let path = repo.join(dir).join(&file.path);
+        let path = place_inside(&repo, dir, &file.path)?;
         let bytes = file.content.as_bytes();
         let new_sha = sha256_hex(bytes);
         let want = path.to_string_lossy().into_owned();
@@ -490,7 +592,10 @@ impl Run<'_> {
                     // Identical bytes do not make it ours: someone else placed it.
                     self.sum.skip(
                         &format!("{want}: exists and grh did not place it"),
-                        "leave it, or remove it and grh install attest --repo",
+                        &format!(
+                            "leave it, or remove it and grh install {} --repo",
+                            part.name()
+                        ),
                     );
                     return Ok(());
                 }
@@ -499,7 +604,7 @@ impl Run<'_> {
                 if !self.replace {
                     self.sum.skip(
                         &format!("{want}: exists and grh did not place it"),
-                        "grh install attest --repo --replace",
+                        &format!("grh install {} --repo --replace", part.name()),
                     );
                     return Ok(());
                 }
@@ -526,7 +631,7 @@ impl Run<'_> {
                 self.store.done(idx)?;
                 self.sum.backup(
                     &format!("{want} was backed up to {}", to.display()),
-                    "grh uninstall attest restores it",
+                    &format!("grh uninstall {} restores it", part.name()),
                 );
             }
         }
@@ -560,5 +665,36 @@ fn status_command(part: &Part, level: &ToolLevel) -> String {
     match &level.status {
         Some(status) => format!("{bin} {}", status.args.join(" ")),
         None => format!("{bin}: no status declared"),
+    }
+}
+
+/// `<repo>/<dir>/<rel>`, refused unless both parts are relative and stay
+/// inside, and the deepest part of it that exists resolves, symlinks
+/// followed, to somewhere under the repository's real path.
+fn place_inside(repo: &Path, dir: &str, rel: &str) -> Result<PathBuf, Exit> {
+    let refuse = |what: &str| {
+        Exit::Failed(format!(
+            "{dir}/{rel}: {what}; a repository file is written only inside the repository"
+        ))
+    };
+    if !stays_inside(dir) || !stays_inside(rel) {
+        return Err(refuse("the path is not relative or leaves the repository"));
+    }
+    let root = std::fs::canonicalize(repo)
+        .map_err(|e| Exit::Failed(format!("cannot resolve {}: {e}", repo.display())))?;
+    let target = repo.join(dir).join(rel);
+    let mut probe = target.as_path();
+    loop {
+        if std::fs::symlink_metadata(probe).is_ok() {
+            let real = std::fs::canonicalize(probe)
+                .map_err(|_| refuse("a link on the path does not resolve"))?;
+            if real.starts_with(&root) {
+                return Ok(target);
+            }
+            return Err(refuse("a link on the path points outside the repository"));
+        }
+        probe = probe
+            .parent()
+            .ok_or_else(|| refuse("no part of the path exists"))?;
     }
 }

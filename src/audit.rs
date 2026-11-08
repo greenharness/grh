@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use crate::catalog::Catalog;
 use crate::exit::Exit;
+use crate::manifest::{Reading, Status};
 use crate::owner::{self, Answer};
 
 const RECOMMEND: &str = "recommend";
@@ -103,6 +104,14 @@ fn has_duro(root: &Path) -> bool {
         .any(|deps| deps.keys().any(|n| n.starts_with("@duro-app/")))
 }
 
+/// A status query whose answer is the state word at `path` in printed JSON.
+fn json_status(args: &[&str], path: &[&str]) -> Status {
+    Status {
+        args: args.iter().map(|a| (*a).to_string()).collect(),
+        reading: Reading::Json(path.iter().map(|k| (*k).to_string()).collect()),
+    }
+}
+
 pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
     let root = git(given, &["rev-parse", "--show-toplevel"])
@@ -126,9 +135,13 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Hooks.
     let mut hooks: Vec<String> = Vec::new();
-    let amont_state = candidates("amont")
-        .first()
-        .map_or(Answer::Unknown, |b| owner::amont_list(b, Some(&root)));
+    let amont_state = candidates("amont").first().map_or(Answer::Unknown, |b| {
+        owner::run_status(
+            &json_status(&["list", "--json"], &["installed", "state"]),
+            b,
+            Some(&root),
+        )
+    });
     if amont_state == Answer::Present {
         hooks.push("amont".into());
     }
@@ -192,11 +205,14 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         .filter(|p| root.join(p).exists())
         .collect();
     let claude_set_up = !claude_files.is_empty();
-    let state_of = |bin: &str, q: fn(&Path) -> Answer| {
-        candidates(bin).first().map_or(Answer::Unknown, |b| q(b))
+    let doctor = json_status(&["doctor", "--json"], &["integration", "state"]);
+    let state_of = |bin: &str| {
+        candidates(bin)
+            .first()
+            .map_or(Answer::Unknown, |b| owner::run_status(&doctor, b, None))
     };
-    let guardrails_state = state_of("amont-agent", owner::amont_agent_doctor);
-    let router_state = state_of("relais", owner::relais_doctor);
+    let guardrails_state = state_of("amont-agent");
+    let router_state = state_of("relais");
     let aval_mcp_registered = candidates("claude").first().is_some_and(|c| {
         Command::new(c)
             .args(["mcp", "get", "aval"])

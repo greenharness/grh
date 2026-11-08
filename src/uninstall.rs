@@ -8,11 +8,13 @@ use crate::catalog::{Catalog, Part, Unknown};
 use crate::exit::Exit;
 use crate::extension;
 use crate::fetch::sha256_hex;
+use crate::manifest::{KeepBinary, Status};
 use crate::ops::{
-    bin_for, confirm, git_root, is_integration, run_tool, text, worst_of, Consent, Summary, Ui,
+    bin_for, confirm, git_root, is_integration, recorded_bin_where, run_tool, text, worst_of,
+    Consent, Summary, Ui,
 };
 use crate::owner::{self, Answer};
-use crate::receipt::{self, Entry, Kind, Level, Store};
+use crate::receipt::{self, Entry, Kind, Level, RecordedStatus, Store};
 use crate::skills;
 
 #[derive(Debug, Default)]
@@ -163,7 +165,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     if only_repo.is_none() {
         for x in &ext_todo {
             ui.say(x);
-            failures.extend(extension::remove(&ui, &mut store, x));
+            failures.extend(remove_extension(&ui, &mut store, x).settle(&mut sum));
         }
     }
     sum.print(&ui);
@@ -196,29 +198,15 @@ fn remove_part(
         .cloned()
         .collect();
     let bin = bin_for(&store.receipt, part);
+    let undo = Undo {
+        ui,
+        name,
+        part: Some(part),
+        bin: bin.as_deref(),
+    };
 
     for level in [Level::Repo, Level::Machine] {
-        for e in entries.iter().filter(|e| e.level == level) {
-            let outcome = match &e.kind {
-                Kind::ToolInstall { undo_argv, .. } => {
-                    undo_tool(ui, part, e, undo_argv, bin.as_deref())
-                }
-                Kind::ToolInstallAdopted => {
-                    ui.say(&format!("  {name}: adopted integration left in place"));
-                    Ok(())
-                }
-                Kind::File { .. } if level == Level::Repo => remove_repo_file(ui, sum, e),
-                _ => continue,
-            };
-            match outcome {
-                Ok(()) => {
-                    if let Err(x) = store.remove_where(|x| x == e) {
-                        failures.push(x);
-                    }
-                }
-                Err(m) => failures.push(fail(ui, name, format!("{m}; entry kept"))),
-            }
-        }
+        failures.extend(undo_entries(&undo, store, &entries, level).settle(sum));
         if level == Level::Machine && only_repo.is_none() {
             match skills::remove(|recorded| part.answers_to(recorded), store) {
                 Ok(r) => {
@@ -240,7 +228,153 @@ fn remove_part(
         }
     }
 
-    // Backups: put the original back when our file is gone.
+    failures.extend(restore_backups(ui, store, name, &entries).settle(sum));
+
+    // The binary goes last, and only when every integration recorded for it
+    // is confirmed gone.
+    if only_repo.is_none() {
+        // The catalog's spec wins for a part it pins.
+        failures.extend(remove_binary(
+            ui,
+            store,
+            sum,
+            name,
+            &|recorded| part.answers_to(recorded),
+            part.keep_binary(),
+        ));
+    }
+    failures
+}
+
+/// What an undo reports: the failures it ends with and the summary lines it
+/// collected, for the caller to merge.
+#[derive(Debug, Default)]
+struct Undone {
+    failures: Vec<Exit>,
+    summary: Summary,
+}
+
+impl Undone {
+    /// Merge the summary lines into `sum` and return the failures.
+    fn settle(self, sum: &mut Summary) -> Vec<Exit> {
+        sum.merge(self.summary);
+        self.failures
+    }
+}
+
+/// Who an undo is for and the binary that answers its status query.
+struct Undo<'a> {
+    ui: &'a Ui,
+    name: &'a str,
+    part: Option<&'a Part>,
+    bin: Option<&'a Path>,
+}
+
+/// Undo what `entries` record at `level`: a tool's undo (confirmed by its
+/// status query) and a placed repo file.
+fn undo_entries(undo: &Undo, store: &mut Store, entries: &[Entry], level: Level) -> Undone {
+    let (ui, name) = (undo.ui, undo.name);
+    let mut failures: Vec<Exit> = Vec::new();
+    let mut sum = Summary::default();
+    for e in entries.iter().filter(|e| e.level == level) {
+        let outcome = match &e.kind {
+            Kind::ToolInstall {
+                undo_argv, status, ..
+            } => undo_tool(undo, e, undo_argv, status.as_ref()),
+            Kind::ToolInstallAdopted => {
+                ui.say(&format!("  {name}: adopted integration left in place"));
+                Ok(())
+            }
+            Kind::File { .. } if level == Level::Repo => remove_repo_file(ui, &mut sum, e),
+            _ => continue,
+        };
+        match outcome {
+            Ok(()) => {
+                if let Err(x) = store.remove_where(|x| x == e) {
+                    failures.push(x);
+                }
+            }
+            Err(m) => failures.push(fail(ui, name, format!("{m}; entry kept"))),
+        }
+    }
+    Undone {
+        failures,
+        summary: sum,
+    }
+}
+
+/// Take out an extension: its tool, files, servers and binary, each only as
+/// far as the receipt recorded it, with no manifest to read.
+fn remove_extension(ui: &Ui, store: &mut Store, name: &str) -> Undone {
+    let mut failures: Vec<Exit> = Vec::new();
+    let mut sum = Summary::default();
+    let entries: Vec<Entry> = store
+        .receipt
+        .entries
+        .iter()
+        .filter(|e| e.part == name)
+        .cloned()
+        .collect();
+    let keep = entries.iter().find_map(|e| {
+        if let Kind::BinaryPlaced { keep_binary, .. } = &e.kind {
+            keep_binary.as_deref().cloned().map(KeepBinary::from)
+        } else {
+            None
+        }
+    });
+    let bin = recorded_bin_where(&store.receipt, |recorded| recorded == name)
+        .map(|(path, _)| path)
+        .filter(|path| path.exists());
+    // A tool entry that recorded its status, or was adopted, is handled here;
+    // the rest are the extension's own `claude` registrations.
+    let recorded_tools: Vec<Entry> = entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                &e.kind,
+                Kind::ToolInstall {
+                    status: Some(_),
+                    ..
+                } | Kind::ToolInstallAdopted
+            )
+        })
+        .cloned()
+        .collect();
+    let undo = Undo {
+        ui,
+        name,
+        part: None,
+        bin: bin.as_deref(),
+    };
+    for level in [Level::Repo, Level::Machine] {
+        failures.extend(undo_entries(&undo, store, &recorded_tools, level).settle(&mut sum));
+    }
+    let repo_files: Vec<Entry> = entries
+        .iter()
+        .filter(|e| matches!(e.kind, Kind::File { .. }) && e.level == Level::Repo)
+        .cloned()
+        .collect();
+    failures.extend(undo_entries(&undo, store, &repo_files, Level::Repo).settle(&mut sum));
+    failures.extend(extension::remove(ui, store, name));
+    failures.extend(restore_backups(ui, store, name, &entries).settle(&mut sum));
+    failures.extend(remove_binary(
+        ui,
+        store,
+        &mut sum,
+        name,
+        &|recorded| recorded == name,
+        keep.as_ref(),
+    ));
+    Undone {
+        failures,
+        summary: sum,
+    }
+}
+
+/// Put an original back when the file grh placed over it is gone.
+fn restore_backups(ui: &Ui, store: &mut Store, name: &str, entries: &[Entry]) -> Undone {
+    let mut failures: Vec<Exit> = Vec::new();
+    let mut sum = Summary::default();
     for e in entries
         .iter()
         .filter(|e| matches!(e.kind, Kind::Backup { .. }))
@@ -278,23 +412,22 @@ fn remove_part(
             }
         }
     }
-
-    // The binary goes last, and only when every integration recorded for it
-    // is confirmed gone.
-    if only_repo.is_none() {
-        failures.extend(remove_binary(ui, store, sum, part));
+    Undone {
+        failures,
+        summary: sum,
     }
-    failures
 }
 
 /// Run an entry's undo, then ask the owner: Ok only when it reports Absent.
+/// The query is the catalog's for a part it pins, else the one the receipt
+/// recorded at install time.
 fn undo_tool(
-    ui: &Ui,
-    part: &Part,
+    undo: &Undo,
     e: &Entry,
-    undo: &[String],
-    bin: Option<&Path>,
+    undo_argv: &[String],
+    recorded: Option<&RecordedStatus>,
 ) -> Result<(), String> {
+    let (ui, name, part, bin) = (undo.ui, undo.name, undo.part, undo.bin);
     let cwd = e.repo.as_deref().map(Path::new);
     if let Some(d) = cwd {
         if !d.is_dir() {
@@ -304,23 +437,30 @@ fn undo_tool(
             ));
         }
     }
-    let integ = match e.level {
-        Level::Machine => part.machine(),
-        Level::Repo => part.repo_level(),
-    }
-    .ok_or_else(|| "the catalog no longer lists this integration".to_string())?;
-    let code = run_tool(ui, undo, cwd)?;
+    let catalog_status = part.and_then(|p| {
+        match e.level {
+            Level::Machine => p.machine(),
+            Level::Repo => p.repo_level(),
+        }
+        .and_then(|level| level.status.clone())
+    });
+    let status = catalog_status
+        .or_else(|| recorded.and_then(|raw| Status::try_from(raw.clone()).ok()))
+        .ok_or_else(|| {
+            "no status query is declared or recorded for this integration".to_string()
+        })?;
+    let code = run_tool(ui, undo_argv, cwd)?;
     let state = match bin {
-        Some(b) => owner::level_state(integ, b, cwd),
+        Some(b) => owner::run_status(&status, b, cwd),
         None => Answer::Unknown,
     };
     if state == Answer::Absent {
-        ui.ok(&format!("{}: integration removed", part.name()));
+        ui.ok(&format!("{name}: integration removed"));
         Ok(())
     } else {
         Err(format!(
             "{} exited {code} and the integration still reports {}",
-            undo.join(" "),
+            undo_argv.join(" "),
             state.as_str()
         ))
     }
@@ -358,20 +498,24 @@ fn remove_repo_file(ui: &Ui, sum: &mut Summary, e: &Entry) -> Result<(), String>
     }
 }
 
-fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, part: &Part) -> Vec<Exit> {
-    let name = part.name();
+fn remove_binary(
+    ui: &Ui,
+    store: &mut Store,
+    sum: &mut Summary,
+    name: &str,
+    belongs: &dyn Fn(&str) -> bool,
+    keep: Option<&KeepBinary>,
+) -> Vec<Exit> {
     let mut failures: Vec<Exit> = Vec::new();
     let blocked = store.receipt.entries.iter().any(|e| {
-        part.answers_to(&e.part)
-            && is_integration(&e.kind)
-            && matches!(e.kind, Kind::ToolInstall { .. })
+        belongs(&e.part) && is_integration(&e.kind) && matches!(e.kind, Kind::ToolInstall { .. })
     });
     let bins: Vec<Entry> = store
         .receipt
         .entries
         .iter()
         .filter(|e| {
-            part.answers_to(&e.part)
+            belongs(&e.part)
                 && matches!(
                     e.kind,
                     Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
@@ -384,7 +528,7 @@ fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, part: &Part) -> 
             Kind::BinaryAdopted { .. } => {
                 failures.extend(store.remove_where(|x| *x == e).err());
             }
-            Kind::BinaryPlaced { path, sha256 } => {
+            Kind::BinaryPlaced { path, sha256, .. } => {
                 if blocked {
                     sum.gap(
                         &format!("{path} kept: an integration of {name} is not confirmed removed"),
@@ -404,9 +548,12 @@ fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, part: &Part) -> 
                         continue;
                     }
                     Ok(cur) if sha256.is_empty() || sha256_hex(&cur) == *sha256 => {
-                        if let Some(spec) = part.keep_binary() {
-                            let bin_name = part.bin().unwrap_or(name);
-                            match owner::keep_binary(spec, bin_name, p, path) {
+                        if let Some(spec) = keep {
+                            let bin_name = p.file_name().map_or_else(
+                                || name.to_string(),
+                                |n| n.to_string_lossy().into_owned(),
+                            );
+                            match owner::keep_binary(spec, &bin_name, p, path) {
                                 owner::Template::Keep(why) => {
                                     sum.gap(
                                         &format!("{path} kept: {why}"),

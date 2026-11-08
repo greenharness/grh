@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::path::{Component, Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
 
@@ -18,7 +18,7 @@ const V1_HARNESS_VERSION: (u64, u64, u64) = (0, 1, 0);
 
 pub const FILE_NAME: &str = "greenharness.toml";
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
     pub extension: Extension,
@@ -39,7 +39,7 @@ pub struct Manifest {
     pub conform: Option<Conform>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Extension {
     pub name: String,
@@ -61,7 +61,7 @@ pub struct Extension {
 
 /// The binary a part installs, where its release lives, and the commands of
 /// its own integration.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Tool {
     pub bin: Option<String>,
@@ -71,7 +71,7 @@ pub struct Tool {
     pub keep_binary: Option<KeepBinary>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Release {
     /// `owner/name` on GitHub, where the release lives.
@@ -84,7 +84,7 @@ pub struct Release {
 
 /// A tool's own commands for one level, and the query that reads it back.
 /// `{bin}` in `install` and `uninstall` is the absolute path of the binary.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolLevel {
     pub install: Vec<String>,
@@ -96,7 +96,7 @@ pub struct ToolLevel {
 }
 
 /// Arguments to the part's binary, and how its answer reads.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(try_from = "RawStatus")]
 pub struct Status {
     pub args: Vec<String>,
@@ -113,12 +113,28 @@ pub enum Reading {
 }
 
 /// A status as written: exactly one of `exit` and `json` becomes a `Reading`.
-#[derive(Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawStatus {
-    args: Vec<String>,
-    exit: Option<ExitPair>,
-    json: Option<Vec<String>>,
+pub struct RawStatus {
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<ExitPair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<Vec<String>>,
+}
+
+impl From<&Status> for RawStatus {
+    fn from(status: &Status) -> RawStatus {
+        let (exit, json) = match &status.reading {
+            Reading::Exit(pair) => (Some(*pair), None),
+            Reading::Json(path) => (None, Some(path.clone())),
+        };
+        RawStatus {
+            args: status.args.clone(),
+            exit,
+            json,
+        }
+    }
 }
 
 impl TryFrom<RawStatus> for Status {
@@ -139,7 +155,7 @@ impl TryFrom<RawStatus> for Status {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ExitPair {
     pub present: i32,
@@ -150,7 +166,7 @@ pub struct ExitPair {
 /// bakes its path. `args` run the binary; `state` is the JSON path of the
 /// state word, `absent` the word that frees the binary, `shims` the path of
 /// the array of baked copies and `binary` the key of each one's path.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct KeepBinary {
     pub args: Vec<String>,
@@ -163,7 +179,7 @@ pub struct KeepBinary {
 }
 
 /// A file a part places in a repository, in the first of `dirs` that exists.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RepoFile {
     pub dirs: Vec<String>,
@@ -172,7 +188,7 @@ pub struct RepoFile {
 }
 
 /// Names taken from grh's pinned skills bundle.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Bundle {
     #[serde(default)]
@@ -182,13 +198,13 @@ pub struct Bundle {
 }
 
 /// A skill directory or an agent file, relative to the manifest directory.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Entry {
     pub path: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Mcp {
     pub name: String,
@@ -197,13 +213,13 @@ pub struct Mcp {
     pub args: Vec<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Command {
     pub command: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Conform {
     pub eslint: Option<String>,
@@ -221,7 +237,7 @@ fn is_plain_name(name: &str) -> bool {
 }
 
 /// A relative path that stays inside its root: normal components only.
-fn stays_inside(path: &str) -> bool {
+pub(crate) fn stays_inside(path: &str) -> bool {
     !path.is_empty()
         && Path::new(path)
             .components()

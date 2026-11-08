@@ -112,21 +112,6 @@ fn json_query(bin: &Path, args: &[&str], cwd: Option<&Path>, path: &[&str]) -> A
     ask(bin, args, cwd).map_or(Answer::Unknown, |(_, text)| json_state(&text, path))
 }
 
-/// `<aval> mcp install --check`: exit 0 present, 1 absent.
-pub fn aval_mcp(bin: &Path) -> Answer {
-    exit_pair(bin, &["mcp", "install", "--check"], None, 0, 1)
-}
-
-/// `<aval> hook uninstall --check` in the repo: exit 1 present, 0 absent.
-pub fn aval_hook(bin: &Path, repo: Option<&Path>) -> Answer {
-    exit_pair(bin, &["hook", "uninstall", "--check"], repo, 1, 0)
-}
-
-/// `<amont> list --json` in the repo: `installed.state`.
-pub fn amont_list(bin: &Path, repo: Option<&Path>) -> Answer {
-    json_query(bin, &["list", "--json"], repo, &["installed", "state"])
-}
-
 /// Run a manifest's `status` query on `bin` (in `cwd`) and read the answer
 /// as its manifest says; a failure to run or parse is `Unknown`.
 pub fn run_status(status: &Status, bin: &Path, cwd: Option<&Path>) -> Answer {
@@ -215,16 +200,6 @@ pub fn keep_binary(spec: &KeepBinary, bin_name: &str, bin: &Path, placed: &str) 
     }
 }
 
-/// `<amont-agent> doctor --json`: `integration.state`.
-pub fn amont_agent_doctor(bin: &Path) -> Answer {
-    json_query(bin, &["doctor", "--json"], None, &["integration", "state"])
-}
-
-/// `<relais> doctor --json`: `integration.state` when present, else Unknown.
-pub fn relais_doctor(bin: &Path) -> Answer {
-    json_query(bin, &["doctor", "--json"], None, &["integration", "state"])
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -255,12 +230,111 @@ mod tests {
     #[test]
     fn a_missing_binary_is_unknown() {
         let nope = Path::new("/nonexistent/grh-test-bin");
-        assert_eq!(aval_mcp(nope), Answer::Unknown);
-        assert_eq!(amont_list(nope, None), Answer::Unknown);
         let status = Status {
             args: vec!["list".into()],
             reading: Reading::Json(vec!["state".into()]),
         };
         assert_eq!(run_status(&status, nope, None), Answer::Unknown);
+    }
+
+    fn spec() -> KeepBinary {
+        KeepBinary {
+            args: vec!["list".into()],
+            state: vec!["state".into()],
+            absent: "absent".into(),
+            shims: vec!["shims".into()],
+            binary: "binary".into(),
+            warning: String::new(),
+        }
+    }
+
+    /// A script that prints `stdout` and exits `code`.
+    fn fake(dir: &Path, code: i32, stdout: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let path = dir.join("tool");
+        std::fs::write(
+            &path,
+            format!("#!/bin/sh\ncat <<'EOF'\n{stdout}\nEOF\nexit {code}\n"),
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        path
+    }
+
+    fn keep_with(code: i32, stdout: &str, placed: &str) -> Template {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake(dir.path(), code, stdout);
+        keep_binary(&spec(), "tool", &bin, placed)
+    }
+
+    fn is_keep(t: &Template, needle: &str) -> bool {
+        matches!(t, Template::Keep(why) if why.contains(needle))
+    }
+
+    #[test]
+    fn keep_binary_keeps_when_the_query_exits_non_zero() {
+        let t = keep_with(3, r#"{"state":"absent"}"#, "/x/tool");
+        assert!(is_keep(&t, "failed"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_keeps_when_the_answer_is_not_json() {
+        let t = keep_with(0, "not json", "/x/tool");
+        assert!(is_keep(&t, "did not answer JSON"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_keeps_on_an_unknown_state() {
+        let t = keep_with(0, r#"{"state":"weird"}"#, "/x/tool");
+        assert!(is_keep(&t, "unknown"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_keeps_when_present_with_no_shims() {
+        let t = keep_with(0, r#"{"state":"present","shims":[]}"#, "/x/tool");
+        assert!(is_keep(&t, "unknown"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_keeps_when_a_shim_names_no_binary() {
+        let t = keep_with(
+            0,
+            r#"{"state":"present","shims":[{"other":"/y"}]}"#,
+            "/x/tool",
+        );
+        assert!(is_keep(&t, "unknown"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_lets_go_when_no_shim_bakes_the_binary() {
+        let t = keep_with(
+            0,
+            r#"{"state":"partial","shims":[{"binary":"/y/tool"}]}"#,
+            "/x/tool",
+        );
+        assert_eq!(t, Template::Gone);
+    }
+
+    #[test]
+    fn keep_binary_keeps_when_a_shim_matches_through_a_canonical_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::write(&real, "").unwrap();
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let answer = format!(
+            r#"{{"state":"present","shims":[{{"binary":"{}"}}]}}"#,
+            link.display()
+        );
+        let bin_dir = tempfile::tempdir().unwrap();
+        let bin = fake(bin_dir.path(), 0, &answer);
+        let t = keep_binary(&spec(), "tool", &bin, real.to_str().unwrap());
+        assert!(is_keep(&t, "bake it"), "{t:?}");
+    }
+
+    #[test]
+    fn keep_binary_lets_go_when_the_state_is_absent() {
+        let t = keep_with(0, r#"{"state":"absent"}"#, "/x/tool");
+        assert_eq!(t, Template::Gone);
     }
 }

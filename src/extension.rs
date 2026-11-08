@@ -8,8 +8,9 @@ use std::process::{Command, Stdio};
 
 use crate::catalog::Part;
 use crate::exit::Exit;
-use crate::manifest::Manifest;
-use crate::ops::{confirm, on_path, run_tool, Consent, Summary, Ui};
+use crate::install::{show_commands, Run};
+use crate::manifest::{Bundle as BundleNames, Manifest};
+use crate::ops::{command_line, confirm, git_root, on_path, run_tool, Consent, Ui};
 use crate::receipt::{Entry, Kind, State, Store};
 use crate::skills::{self, Bundle};
 
@@ -18,6 +19,7 @@ pub const PREFIX: &str = "ext:";
 #[derive(Debug, Default)]
 pub struct Opts {
     pub dir: PathBuf,
+    pub repo: bool,
     pub replace: bool,
     pub dry_run: bool,
     pub yes: bool,
@@ -85,12 +87,20 @@ fn gather(dir: &Path, m: &Manifest) -> Result<(Part, Bundle), Exit> {
         files.insert(format!("agents/{name}.md"), bytes);
         agents.push(name);
     }
-    let part = Part::bundled(
-        format!("{PREFIX}{}", m.extension.name),
-        format!("extension {} {}", m.extension.name, m.extension.version),
-        skills,
-        agents,
-    );
+    // The extension is installed as the part `ext:<name>`: its own tool,
+    // repo files and hint, and the skills and agents gathered above.
+    let mut part = m.clone();
+    part.extension.name = format!("{PREFIX}{}", m.extension.name);
+    part.extension.summary = Some(format!(
+        "extension {} {}",
+        m.extension.name, m.extension.version
+    ));
+    part.extension.needs.clear();
+    part.extension.enhances.clear();
+    part.extension.aliases.clear();
+    part.skill.clear();
+    part.agent.clear();
+    part.bundle = Some(BundleNames { skills, agents });
     Ok((part, Bundle::from_files(files)))
 }
 
@@ -137,6 +147,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
     let dir = &opts.dir;
     let (part, bundle) = gather(dir, &m)?;
     let name = part.name().to_string();
+    let repo = if opts.repo { Some(git_root()?) } else { None };
     ui.say("grh will install:");
     ui.say(&format!(
         "  {name}: {} skills, {} agents, {} mcp servers",
@@ -144,6 +155,12 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
         part.bundle_agents().len(),
         m.mcp.len()
     ));
+    // The catalog does not pin an extension: show what it would run before
+    // asking, whatever `--quiet` says and whether or not stdin is a terminal.
+    show_commands(&part);
+    for mcp in &m.mcp {
+        eprintln!("  mcp add: {}", command_line(&mcp_argv(mcp).0));
+    }
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
@@ -152,22 +169,10 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let mut store = Store::open()?;
-    let mut failures: Vec<Exit> = Vec::new();
-    let mut sum = Summary::default();
-
-    if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
-        let claude = skills::claude_dir()?;
-        let placement = skills::place(&bundle, &part, &claude, &mut store, opts.replace)?;
-        ui.ok(&format!(
-            "{name}: {} skill and agent files in {}",
-            placement.placed.len(),
-            claude.display()
-        ));
-        for s in &placement.skipped {
-            ui.warn(&format!("{}: {}", s.path.display(), s.reason));
-        }
-    }
+    let store = Store::open()?;
+    let mut run = Run::new(None, ui, store, opts.replace, repo, Some(bundle));
+    let mut failures: Vec<Exit> = run.part(&part);
+    let (ui, mut store, mut sum) = run.into_parts();
 
     for mcp in &m.mcp {
         let (argv, undo_argv) = mcp_argv(mcp);
@@ -229,6 +234,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
             Kind::ToolInstall {
                 argv: argv.clone(),
                 undo_argv,
+                status: None,
             },
         ))?;
         match run_tool(&ui, &argv, None) {
@@ -305,6 +311,10 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
         .collect();
     for e in &entries {
         let outcome = match &e.kind {
+            // An entry that recorded a status is a tool's, undone by uninstall.
+            Kind::ToolInstall {
+                status: Some(_), ..
+            } => continue,
             Kind::ToolInstall { undo_argv, .. } => {
                 let ran = run_tool(ui, undo_argv, None);
                 // The entry goes only when claude reports the server gone.

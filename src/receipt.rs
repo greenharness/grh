@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
+use crate::manifest::{ExitPair, KeepBinary, RawStatus, Status};
 
 pub const VERSION: u32 = 1;
 
@@ -30,12 +31,100 @@ pub enum State {
     Done,
 }
 
+/// A status query as the receipt keeps it. The receipt is a persisted file
+/// older and newer grh both read, so these records ignore unknown keys; the
+/// manifest types they mirror refuse them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedStatus {
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<RecordedExitPair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedExitPair {
+    pub present: i32,
+    pub absent: i32,
+}
+
+/// A `keep_binary` query as the receipt keeps it; see `RecordedStatus`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedKeepBinary {
+    pub args: Vec<String>,
+    pub state: Vec<String>,
+    pub absent: String,
+    pub shims: Vec<String>,
+    pub binary: String,
+    pub warning: String,
+}
+
+impl From<&Status> for RecordedStatus {
+    fn from(status: &Status) -> RecordedStatus {
+        let raw = RawStatus::from(status);
+        RecordedStatus {
+            args: raw.args,
+            exit: raw.exit.map(|pair| RecordedExitPair {
+                present: pair.present,
+                absent: pair.absent,
+            }),
+            json: raw.json,
+        }
+    }
+}
+
+impl TryFrom<RecordedStatus> for Status {
+    type Error = String;
+
+    fn try_from(recorded: RecordedStatus) -> Result<Status, String> {
+        Status::try_from(RawStatus {
+            args: recorded.args,
+            exit: recorded.exit.map(|pair| ExitPair {
+                present: pair.present,
+                absent: pair.absent,
+            }),
+            json: recorded.json,
+        })
+    }
+}
+
+impl From<&KeepBinary> for RecordedKeepBinary {
+    fn from(spec: &KeepBinary) -> RecordedKeepBinary {
+        RecordedKeepBinary {
+            args: spec.args.clone(),
+            state: spec.state.clone(),
+            absent: spec.absent.clone(),
+            shims: spec.shims.clone(),
+            binary: spec.binary.clone(),
+            warning: spec.warning.clone(),
+        }
+    }
+}
+
+impl From<RecordedKeepBinary> for KeepBinary {
+    fn from(recorded: RecordedKeepBinary) -> KeepBinary {
+        KeepBinary {
+            args: recorded.args,
+            state: recorded.state,
+            absent: recorded.absent,
+            shims: recorded.shims,
+            binary: recorded.binary,
+            warning: recorded.warning,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     BinaryPlaced {
         path: String,
         sha256: String,
+        /// The part's `keep_binary` at install time, so uninstall can ask it
+        /// without the manifest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_binary: Option<Box<RecordedKeepBinary>>,
     },
     BinaryAdopted {
         path: String,
@@ -43,6 +132,10 @@ pub enum Kind {
     ToolInstall {
         argv: Vec<String>,
         undo_argv: Vec<String>,
+        /// The level's `status` at install time, so uninstall can confirm the
+        /// undo without the manifest (an entry from grh 0.1.x has none).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<RecordedStatus>,
     },
     ToolInstallAdopted,
     File {
@@ -337,6 +430,7 @@ mod tests {
             Kind::BinaryPlaced {
                 path: "/b/aval".into(),
                 sha256: "01".into(),
+                keep_binary: None,
             },
             Kind::BinaryAdopted {
                 path: "/b/amont".into(),
@@ -344,6 +438,11 @@ mod tests {
             Kind::ToolInstall {
                 argv: vec!["aval".into(), "mcp".into()],
                 undo_argv: vec!["aval".into(), "unmcp".into()],
+                status: Some(RecordedStatus {
+                    args: vec!["list".into()],
+                    exit: None,
+                    json: Some(vec!["state".into()]),
+                }),
             },
             Kind::ToolInstallAdopted,
             Kind::File {
@@ -430,5 +529,27 @@ mod tests {
             0o755
         );
         assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn an_entry_with_unknown_keys_inside_a_recorded_query_still_reads() {
+        let text = r#"{"part":"p","level":"machine","state":"done","kind":{"tool-install":{
+            "argv":["t"],"undo_argv":["u"],
+            "status":{"args":["s"],"exit":{"present":0,"absent":1,"later":true},"later":1}}}}"#;
+        let entry: Entry = serde_json::from_str(text).unwrap();
+        let Kind::ToolInstall { status, .. } = entry.kind else {
+            panic!("not a tool install");
+        };
+        let status = Status::try_from(status.unwrap()).unwrap();
+        assert_eq!(status.args, vec!["s".to_string()]);
+
+        let text = r#"{"part":"p","level":"machine","state":"done","kind":{"binary-placed":{
+            "path":"/b","sha256":"01",
+            "keep_binary":{"args":["a"],"state":["s"],"absent":"x","shims":["h"],"binary":"b","warning":"w","later":2}}}}"#;
+        let entry: Entry = serde_json::from_str(text).unwrap();
+        let Kind::BinaryPlaced { keep_binary, .. } = entry.kind else {
+            panic!("not a placed binary");
+        };
+        assert_eq!(KeepBinary::from(*keep_binary.unwrap()).absent, "x");
     }
 }
