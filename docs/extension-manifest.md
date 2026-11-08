@@ -1,8 +1,8 @@
-# Extension manifest v1
+# Extension manifest (v1, and v2 from harness 0.2)
 
 An extension is a directory with a `greenharness.toml` at its root. `grh install --extension <dir>` reads it (ADR-0048, ADR-0050). Everything it places is recorded in grh's receipt under the part `ext:<name>`, so `grh uninstall` removes it again.
 
-Unknown keys, at any level, are refused (exit 2). So is a `harness` requirement grh does not satisfy: grh's harness version is 0.1.
+Unknown keys, at any level, are refused (exit 2). So is a `harness` requirement grh does not satisfy: grh's harness version is 0.2. A v1 manifest (harness `>=0.1`) still loads; a harness that only matches 0.1, such as `^0.1`, is refused.
 
 ```toml
 [extension]
@@ -42,3 +42,14 @@ eslint = "duro lint"
 - `[conform]` `eslint`: grh prints the line; it changes nothing.
 
 `<claude>` is `$CLAUDE_CONFIG_DIR`, else `~/.claude`. A file already there that grh did not place is left alone unless `--replace`.
+
+## v2 (harness 0.2)
+
+The catalog's `[[part]]` entries are manifests of this same type. v2 adds the following; any of them requires `harness = ">=0.2"` (a requirement that 0.1 satisfies is refused).
+
+- `[extension]`: `summary`, `needs`, `enhances`, `aliases` (part names), `hint` (printed, never run) and `published` (default true).
+- `[tool]`: `bin`; `[tool.release]`: `repo`, `version`, `sha256` per target triple.
+- `[tool.machine]` and `[tool.repo_level]`: `install`, `uninstall` (with `{bin}`), `requires` (host commands that must be on PATH) and `status`, either `{ args, exit = { present, absent } }` or `{ args, json = ["installed", "state"] }`.
+- `[tool.keep_binary]`: `args`, `state` (JSON path), `absent`, `shims` (JSON path), `binary`, `warning`: when a placed binary must stay.
+- `[[repo_file]]`: `dirs` (the first that exists in the repository, else the last), `path`, `content`; relative and inside the repository.
+- `[bundle]`: `skills`, `agents` taken from grh's pinned skills bundle.

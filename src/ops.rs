@@ -254,11 +254,11 @@ pub fn on_path(name: &str) -> bool {
 }
 
 /// The binary the receipt records for `part`: its path and whether grh placed it.
-pub fn recorded_bin(receipt: &Receipt, part: &str) -> Option<(PathBuf, bool)> {
+pub fn recorded_bin(receipt: &Receipt, part: &Part) -> Option<(PathBuf, bool)> {
     receipt
         .entries
         .iter()
-        .filter(|e| e.part == part && e.level == Level::Machine)
+        .filter(|e| part.answers_to(&e.part) && e.level == Level::Machine)
         .find_map(|e| match &e.kind {
             Kind::BinaryPlaced { path, .. } => Some((PathBuf::from(path), true)),
             Kind::BinaryAdopted { path } => Some((PathBuf::from(path), false)),
@@ -268,10 +268,10 @@ pub fn recorded_bin(receipt: &Receipt, part: &str) -> Option<(PathBuf, bool)> {
 
 /// The part's binary: the receipt's, else the first on PATH or in grh's bin dir.
 pub fn bin_for(receipt: &Receipt, part: &Part) -> Option<PathBuf> {
-    recorded_bin(receipt, &part.name)
+    recorded_bin(receipt, part)
         .map(|(path, _)| path)
         .filter(|path| path.exists())
-        .or_else(|| part.bin.as_deref().and_then(dispatch::find))
+        .or_else(|| part.bin().and_then(dispatch::find))
 }
 
 pub fn is_integration(k: &Kind) -> bool {
@@ -279,8 +279,8 @@ pub fn is_integration(k: &Kind) -> bool {
 }
 
 /// Does `e` belong to `part` at `level` (and, for a repo, to `repo`)?
-pub fn same_scope(e: &Entry, part: &str, level: Level, repo: Option<&Path>) -> bool {
-    e.part == part
+pub fn same_scope(e: &Entry, part: &Part, level: Level, repo: Option<&Path>) -> bool {
+    part.answers_to(&e.part)
         && e.level == level
         && e.repo.as_deref() == repo.map(|r| r.to_string_lossy()).as_deref()
 }
@@ -288,7 +288,7 @@ pub fn same_scope(e: &Entry, part: &str, level: Level, repo: Option<&Path>) -> b
 pub fn listing(cat: &Catalog) -> String {
     let mut out = String::from("name parts or profiles to install.\nparts:\n");
     for part in &cat.parts {
-        out.push_str(&format!("  {:<11} {}\n", part.name, part.summary));
+        out.push_str(&format!("  {:<11} {}\n", part.name(), part.summary()));
     }
     out.push_str("profiles:\n");
     for (name, members) in &cat.profiles {

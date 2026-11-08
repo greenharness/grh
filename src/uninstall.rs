@@ -26,19 +26,26 @@ pub struct Opts {
 }
 
 /// The entries of `part` this run may touch.
-fn in_scope(e: &Entry, part: &str, only_repo: Option<&Path>) -> bool {
-    e.part == part
+fn in_scope(e: &Entry, part: &Part, only_repo: Option<&Path>) -> bool {
+    part.answers_to(&e.part)
         && match only_repo {
             None => true,
             Some(r) => e.level == Level::Repo && e.repo.as_deref() == Some(&*r.to_string_lossy()),
         }
 }
 
+/// The catalog's name for `name`, which may be an alias; other names stay.
+fn canonical(cat: &Catalog, name: &str) -> String {
+    cat.part(name)
+        .map_or_else(|| name.to_string(), |p| p.name().to_string())
+}
+
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
     let only_repo = if opts.repo { Some(git_root()?) } else { None };
     let state_dir = receipt::state_dir()?;
-    let before = receipt::read_in(&state_dir)?;
+    let mut before = receipt::read_in(&state_dir)?;
+    before.rename_parts(|name| cat.name_of_alias(name));
     let held: BTreeSet<String> = before.entries.iter().map(|e| e.part.clone()).collect();
 
     // The parts to remove, dependents before what they need.
@@ -48,9 +55,9 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     } else {
         for n in &opts.names {
             if let Some(members) = cat.profiles.get(n) {
-                targets.extend(members.iter().cloned());
+                targets.extend(members.iter().map(|m| canonical(cat, m)));
             } else if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
-                targets.insert(n.clone());
+                targets.insert(canonical(cat, n));
             } else {
                 return Err(Exit::Usage(format!("unknown part or profile: {n}")));
             }
@@ -59,14 +66,14 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let all: Vec<String> = cat
         .parts
         .iter()
-        .map(|planned| planned.name.clone())
+        .map(|planned| planned.name().to_string())
         .collect();
     let order: Vec<&Part> = cat
         .resolve(&all)
         .map_err(|Unknown::Name(n)| Exit::Usage(format!("unknown part {n}")))?
         .into_iter()
         .rev()
-        .filter(|planned| targets.contains(&planned.name))
+        .filter(|planned| targets.contains(planned.name()))
         .collect();
     let ext_todo: Vec<String> = targets
         .iter()
@@ -77,12 +84,12 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         before
             .entries
             .iter()
-            .any(|e| in_scope(e, &planned.name, only_repo.as_deref()))
+            .any(|e| in_scope(e, planned, only_repo.as_deref()))
     });
     for planned in &absent {
         ui.say(&format!(
             "{}: nothing recorded by grh, skipped",
-            planned.name
+            planned.name()
         ));
     }
     if todo.is_empty() && (ext_todo.is_empty() || only_repo.is_some()) {
@@ -98,16 +105,16 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             .cloned()
             .collect();
         for planned in &todo {
-            for dep in cat.dependents(&planned.name, &remaining) {
+            for dep in cat.dependents(planned.name(), &remaining) {
                 if opts.keep_deps {
                     return Err(Exit::Failed(format!(
                         "{} is needed by {dep}: run `grh uninstall {dep}` first (nothing changed)",
-                        planned.name
+                        planned.name()
                     )));
                 }
                 ui.warn(&format!(
                     "{dep} still needs {}: it will stop working; remove it with `grh uninstall {dep}`",
-                    planned.name
+                    planned.name()
                 ));
             }
         }
@@ -118,11 +125,11 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         let n = before
             .entries
             .iter()
-            .filter(|e| in_scope(e, &planned.name, only_repo.as_deref()))
+            .filter(|e| in_scope(e, planned, only_repo.as_deref()))
             .count();
         ui.say(&format!(
             "  {}: {n} recorded step(s), undone newest scope first",
-            planned.name
+            planned.name()
         ));
     }
     for x in ext_todo.iter().filter(|_| only_repo.is_none()) {
@@ -144,7 +151,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let mut sum = Summary::default();
     let mut failures: Vec<Exit> = Vec::new();
     for part in &todo {
-        ui.say(&part.name);
+        ui.say(part.name());
         failures.extend(remove_part(
             &ui,
             &mut store,
@@ -179,13 +186,13 @@ fn remove_part(
     part: &Part,
     only_repo: Option<&Path>,
 ) -> Vec<Exit> {
-    let name = part.name.as_str();
+    let name = part.name();
     let mut failures: Vec<Exit> = Vec::new();
     let entries: Vec<Entry> = store
         .receipt
         .entries
         .iter()
-        .filter(|e| in_scope(e, name, only_repo))
+        .filter(|e| in_scope(e, part, only_repo))
         .cloned()
         .collect();
     let bin = bin_for(&store.receipt, part);
@@ -213,7 +220,7 @@ fn remove_part(
             }
         }
         if level == Level::Machine && only_repo.is_none() {
-            match skills::remove(name, store) {
+            match skills::remove(|recorded| part.answers_to(recorded), store) {
                 Ok(r) => {
                     if !r.removed.is_empty() {
                         ui.ok(&format!(
@@ -275,7 +282,7 @@ fn remove_part(
     // The binary goes last, and only when every integration recorded for it
     // is confirmed gone.
     if only_repo.is_none() {
-        failures.extend(remove_binary(ui, store, sum, name));
+        failures.extend(remove_binary(ui, store, sum, part));
     }
     failures
 }
@@ -298,17 +305,17 @@ fn undo_tool(
         }
     }
     let integ = match e.level {
-        Level::Machine => part.machine.as_ref(),
-        Level::Repo => part.repo_level.as_ref(),
+        Level::Machine => part.machine(),
+        Level::Repo => part.repo_level(),
     }
     .ok_or_else(|| "the catalog no longer lists this integration".to_string())?;
     let code = run_tool(ui, undo, cwd)?;
     let state = match bin {
-        Some(b) => owner::query(&integ.query, b, cwd),
+        Some(b) => owner::level_state(integ, b, cwd),
         None => Answer::Unknown,
     };
     if state == Answer::Absent {
-        ui.ok(&format!("{}: integration removed", part.name));
+        ui.ok(&format!("{}: integration removed", part.name()));
         Ok(())
     } else {
         Err(format!(
@@ -351,17 +358,20 @@ fn remove_repo_file(ui: &Ui, sum: &mut Summary, e: &Entry) -> Result<(), String>
     }
 }
 
-fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, name: &str) -> Vec<Exit> {
+fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, part: &Part) -> Vec<Exit> {
+    let name = part.name();
     let mut failures: Vec<Exit> = Vec::new();
     let blocked = store.receipt.entries.iter().any(|e| {
-        e.part == name && is_integration(&e.kind) && matches!(e.kind, Kind::ToolInstall { .. })
+        part.answers_to(&e.part)
+            && is_integration(&e.kind)
+            && matches!(e.kind, Kind::ToolInstall { .. })
     });
     let bins: Vec<Entry> = store
         .receipt
         .entries
         .iter()
         .filter(|e| {
-            e.part == name
+            part.answers_to(&e.part)
                 && matches!(
                     e.kind,
                     Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
@@ -394,18 +404,24 @@ fn remove_binary(ui: &Ui, store: &mut Store, sum: &mut Summary, name: &str) -> V
                         continue;
                     }
                     Ok(cur) if sha256.is_empty() || sha256_hex(&cur) == *sha256 => {
-                        if name == "gate" {
-                            match owner::amont_template(p, path) {
+                        if let Some(spec) = part.keep_binary() {
+                            let bin_name = part.bin().unwrap_or(name);
+                            match owner::keep_binary(spec, bin_name, p, path) {
                                 owner::Template::Keep(why) => {
                                     sum.gap(
                                         &format!("{path} kept: {why}"),
-                                        &format!("grh uninstall {name}, once `{path} list --json` reports template_dir absent"),
+                                        &format!(
+                                            "grh uninstall {name}, once `{path} {}` reports {} at {}",
+                                            spec.args.join(" "),
+                                            spec.absent,
+                                            spec.state.join(".")
+                                        ),
                                     );
                                     continue;
                                 }
-                                owner::Template::Gone => ui.warn(&format!(
-                                    "{path} is removed: repositories armed by hand with it fail their next commit until `amont init` re-arms them"
-                                )),
+                                owner::Template::Gone => {
+                                    ui.warn(&format!("{path} is removed: {}", spec.warning));
+                                }
                             }
                         }
                         if let Err(x) = std::fs::remove_file(p) {

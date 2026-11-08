@@ -99,6 +99,18 @@ pub struct Receipt {
     pub entries: Vec<Entry>,
 }
 
+impl Receipt {
+    /// Rename entries whose part `rename` maps to another name, in memory:
+    /// a receipt written under an alias is read under the part's own name.
+    pub fn rename_parts(&mut self, rename: impl Fn(&str) -> Option<String>) {
+        for entry in &mut self.entries {
+            if let Some(canonical) = rename(&entry.part) {
+                entry.part = canonical;
+            }
+        }
+    }
+}
+
 impl Default for Receipt {
     fn default() -> Self {
         Receipt {

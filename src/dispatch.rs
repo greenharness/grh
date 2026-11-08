@@ -43,7 +43,7 @@ pub fn run(catalog: &Catalog, argv: &[OsString]) -> Exit {
     let Some(part) = catalog.part(&name) else {
         return Exit::Usage(format!("unknown command or part: {name}; see grh --help"));
     };
-    let Some(bin) = part.bin.as_deref() else {
+    let Some(bin) = part.bin() else {
         return Exit::Usage(format!("{name} has no command of its own"));
     };
     let Some(path) = find(bin) else {

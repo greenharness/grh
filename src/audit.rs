@@ -219,13 +219,13 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Shadowed binaries.
     for part in &cat.parts {
-        if let Some(bin) = &part.bin {
+        if let Some(bin) = part.bin() {
             let found = candidates(bin);
             if found.len() > 1 {
                 let list: Vec<String> = found.iter().map(|p| p.display().to_string()).collect();
                 warnings.push(format!(
                     "{bin} ({}) is shadowed on PATH: {} candidates, {} wins: {}",
-                    part.name,
+                    part.name(),
                     found.len(),
                     found[0].display(),
                     list.join(", ")

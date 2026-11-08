@@ -7,10 +7,11 @@ use std::process::{Command, Stdio};
 
 use serde_json::{json, Value};
 
-use crate::catalog::{Catalog, Integration, Part};
+use crate::catalog::{Catalog, Part};
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::extension;
+use crate::manifest::ToolLevel;
 use crate::ops::{bin_for, git_root, mark, recorded_bin, same_scope, use_color, Mark};
 use crate::owner::{self, Answer};
 use crate::receipt::{self, Kind, Level};
@@ -31,19 +32,19 @@ fn version_of(bin: &Path) -> Option<String> {
 }
 
 fn state_of(
-    integ: Option<&Integration>,
+    integ: Option<&ToolLevel>,
     bin: Option<&PathBuf>,
     repo: Option<&Path>,
 ) -> Option<Answer> {
     let integ = integ?;
     Some(match bin {
-        Some(b) => owner::query(&integ.query, b, repo),
+        Some(b) => owner::level_state(integ, b, repo),
         None => Answer::Unknown,
     })
 }
 
 fn part_json(part: &Part, receipt: &receipt::Receipt, repo: Option<&Path>) -> Value {
-    let recorded = recorded_bin(receipt, &part.name);
+    let recorded = recorded_bin(receipt, part);
     let bin = bin_for(receipt, part);
     let source = match (&recorded, &bin) {
         (Some((_, true)), Some(_)) => Some("placed"),
@@ -51,8 +52,8 @@ fn part_json(part: &Part, receipt: &receipt::Receipt, repo: Option<&Path>) -> Va
         (_, Some(_)) => Some("on-path"),
         _ => None,
     };
-    let held = receipt.entries.iter().any(|e| e.part == part.name);
-    let installed = if part.bin.is_some() {
+    let held = receipt.entries.iter().any(|e| part.answers_to(&e.part));
+    let installed = if part.bin().is_some() {
         bin.is_some()
     } else {
         held
@@ -60,30 +61,30 @@ fn part_json(part: &Part, receipt: &receipt::Receipt, repo: Option<&Path>) -> Va
     let repos: Vec<&str> = receipt
         .entries
         .iter()
-        .filter(|e| e.part == part.name && e.level == Level::Repo)
+        .filter(|e| part.answers_to(&e.part) && e.level == Level::Repo)
         .filter_map(|e| e.repo.as_deref())
         .collect();
     let owner_of = |level: Level, scope: Option<&Path>| {
         receipt
             .entries
             .iter()
-            .filter(|e| same_scope(e, &part.name, level, scope))
+            .filter(|e| same_scope(e, part, level, scope))
             .find_map(|e| match e.kind {
                 Kind::ToolInstall { .. } => Some("grh"),
                 Kind::ToolInstallAdopted => Some("adopted"),
                 _ => None,
             })
     };
-    let machine = state_of(part.machine.as_ref(), bin.as_ref(), None)
+    let machine = state_of(part.machine(), bin.as_ref(), None)
         .map(|s| json!({ "state": s.as_str(), "owner": owner_of(Level::Machine, None) }));
     let in_repo = repo.and_then(|r| {
-        state_of(part.repo_level.as_ref(), bin.as_ref(), Some(r)).map(|s| {
+        state_of(part.repo_level(), bin.as_ref(), Some(r)).map(|s| {
             json!({ "path": r.to_string_lossy(), "state": s.as_str(), "owner": owner_of(Level::Repo, Some(r)) })
         })
     });
     json!({
-        "name": part.name,
-        "summary": part.summary,
+        "name": part.name(),
+        "summary": part.summary(),
         "installed": installed,
         "version": bin.as_deref().and_then(version_of),
         "binary": bin.as_ref().map(|b| b.to_string_lossy().into_owned()),
@@ -91,7 +92,7 @@ fn part_json(part: &Part, receipt: &receipt::Receipt, repo: Option<&Path>) -> Va
         "machine": machine,
         "repo": in_repo,
         "armed_repos": repos,
-        "extension": part.extension,
+        "extension": (!part.is_published()).then_some("unpublished"),
     })
 }
 

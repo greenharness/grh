@@ -1,5 +1,5 @@
-//! What each tool says about its own integration. One function per `query`
-//! name in `catalog.toml`, reading ONLY the tool's published query. A missing
+//! What each tool says about its own integration, read ONLY through the
+//! query its manifest declares (`status`, `keep_binary`). A missing
 //! binary, a crash, a timeout or an answer that does not parse is `Unknown`,
 //! and `Unknown` never authorises a change.
 
@@ -7,6 +7,8 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
+
+use crate::manifest::{KeepBinary, Reading, Status, ToolLevel};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Answer {
@@ -125,32 +127,59 @@ pub fn amont_list(bin: &Path, repo: Option<&Path>) -> Answer {
     json_query(bin, &["list", "--json"], repo, &["installed", "state"])
 }
 
-/// What `<amont> list --json` says about the template directory a placed
-/// `amont` binary may be baked into.
+/// Run a manifest's `status` query on `bin` (in `cwd`) and read the answer
+/// as its manifest says; a failure to run or parse is `Unknown`.
+pub fn run_status(status: &Status, bin: &Path, cwd: Option<&Path>) -> Answer {
+    let args: Vec<&str> = status.args.iter().map(String::as_str).collect();
+    match &status.reading {
+        Reading::Exit(pair) => exit_pair(bin, &args, cwd, pair.present, pair.absent),
+        Reading::Json(path) => {
+            let path: Vec<&str> = path.iter().map(String::as_str).collect();
+            json_query(bin, &args, cwd, &path)
+        }
+    }
+}
+
+/// The state of one level of a tool's integration, by its declared `status`;
+/// a level that declares none is `Unknown`.
+pub fn level_state(level: &ToolLevel, bin: &Path, cwd: Option<&Path>) -> Answer {
+    level
+        .status
+        .as_ref()
+        .map_or(Answer::Unknown, |s| run_status(s, bin, cwd))
+}
+
+/// What a manifest's `keep_binary` query says about a placed binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Template {
-    /// Safe to remove the binary; repositories armed by hand with it will fail.
+    /// Safe to remove the binary.
     Gone,
     /// Keep the binary, for this reason.
     Keep(String),
 }
 
-/// `<amont> list --json`: `template_dir.state` and `template_dir.shims[].binary`.
-/// Anything but a clear answer keeps the binary.
-pub fn amont_template(bin: &Path, placed: &str) -> Template {
-    let Some((0, text)) = ask(bin, &["list", "--json"], None) else {
-        return Template::Keep("`amont list --json` failed".into());
+fn json_at<'a>(v: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+    path.iter().try_fold(v, |at, key| at.get(key))
+}
+
+/// Run the `keep_binary` query of the part whose binary is `bin_name`, and
+/// decide whether the placed binary at `placed` may go. Anything but a clear
+/// answer keeps the binary.
+pub fn keep_binary(spec: &KeepBinary, bin_name: &str, bin: &Path, placed: &str) -> Template {
+    let args: Vec<&str> = spec.args.iter().map(String::as_str).collect();
+    let command = format!("{bin_name} {}", spec.args.join(" "));
+    let Some((0, text)) = ask(bin, &args, None) else {
+        return Template::Keep(format!("`{command}` failed"));
     };
     let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return Template::Keep("`amont list --json` did not answer JSON".into());
+        return Template::Keep(format!("`{command}` did not answer JSON"));
     };
-    let dir = &v["template_dir"];
-    match dir["state"]
-        .as_str()
-        .map(str::to_ascii_lowercase)
-        .as_deref()
-    {
-        Some("absent") => Template::Gone,
+    let unknown = || Template::Keep(format!("{bin_name}'s answer about its copies is unknown"));
+    let state = json_at(&v, &spec.state)
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_ascii_lowercase);
+    match state.as_deref() {
+        Some(word) if word == spec.absent.to_ascii_lowercase() => Template::Gone,
         Some("present" | "partial") => {
             let same = |b: &str| {
                 b == placed
@@ -161,25 +190,28 @@ pub fn amont_template(bin: &Path, placed: &str) -> Template {
             // Every shim must name its binary; anything less is an answer
             // grh cannot read, and an unreadable answer never authorises a
             // removal.
-            let Some(binaries) = dir["shims"].as_array().and_then(|shims| {
-                shims
-                    .iter()
-                    .map(|s| s["binary"].as_str())
-                    .collect::<Option<Vec<_>>>()
-            }) else {
-                return Template::Keep("amont's template directory state is unknown".into());
+            let Some(binaries) = json_at(&v, &spec.shims)
+                .and_then(serde_json::Value::as_array)
+                .and_then(|shims| {
+                    shims
+                        .iter()
+                        .map(|s| s.get(&spec.binary).and_then(serde_json::Value::as_str))
+                        .collect::<Option<Vec<_>>>()
+                })
+            else {
+                return unknown();
             };
             // Present with no shims contradicts itself: unknown, not absent.
             if binaries.is_empty() {
-                return Template::Keep("amont's template directory state is unknown".into());
+                return unknown();
             }
             if binaries.into_iter().any(same) {
-                Template::Keep("amont's template directory shims bake it".into())
+                Template::Keep(format!("{bin_name}'s copies bake it"))
             } else {
                 Template::Gone
             }
         }
-        _ => Template::Keep("amont's template directory state is unknown".into()),
+        _ => unknown(),
     }
 }
 
@@ -191,18 +223,6 @@ pub fn amont_agent_doctor(bin: &Path) -> Answer {
 /// `<relais> doctor --json`: `integration.state` when present, else Unknown.
 pub fn relais_doctor(bin: &Path) -> Answer {
     json_query(bin, &["doctor", "--json"], None, &["integration", "state"])
-}
-
-/// Run the query a catalog entry names. An unknown name is `Unknown`.
-pub fn query(name: &str, bin: &Path, repo: Option<&Path>) -> Answer {
-    match name {
-        "aval-mcp" => aval_mcp(bin),
-        "aval-hook" => aval_hook(bin, repo),
-        "amont-list" => amont_list(bin, repo),
-        "amont-agent-doctor" => amont_agent_doctor(bin),
-        "relais-doctor" => relais_doctor(bin),
-        _ => Answer::Unknown,
-    }
 }
 
 #[cfg(test)]
@@ -236,7 +256,11 @@ mod tests {
     fn a_missing_binary_is_unknown() {
         let nope = Path::new("/nonexistent/grh-test-bin");
         assert_eq!(aval_mcp(nope), Answer::Unknown);
-        assert_eq!(query("amont-list", nope, None), Answer::Unknown);
-        assert_eq!(query("no-such-query", nope, None), Answer::Unknown);
+        assert_eq!(amont_list(nope, None), Answer::Unknown);
+        let status = Status {
+            args: vec!["list".into()],
+            reading: Reading::Json(vec!["state".into()]),
+        };
+        assert_eq!(run_status(&status, nope, None), Answer::Unknown);
     }
 }

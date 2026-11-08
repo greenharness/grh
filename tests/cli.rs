@@ -102,29 +102,59 @@ impl Fx {
         );
         catalog.push_str(&format!(
             "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\n\
+             order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\"]\n\
              [profiles]\nsolo = [\"gate\", \"guardrails\"]\n",
             sha256_hex(&skills)
         ));
+        let level = |key: &str, install: &str, uninstall: &str, requires: &str, status: &str| {
+            format!(
+                "[part.tool.{key}]\ninstall = {install}\nuninstall = {uninstall}\n{requires}\
+                 [part.tool.{key}.status]\n{status}\n"
+            )
+        };
+        let claude = "requires = [\"claude\"]\n";
         for (part, bin, extra) in [
             (
                 "decisions",
                 "aval",
-                "[part.machine]\ninstall = [\"{bin}\", \"mcp\", \"install\", \"--write\"]\n\
-                 uninstall = [\"{bin}\", \"mcp\", \"uninstall\", \"--write\"]\nquery = \"aval-mcp\"\n\
-                 [part.repo_level]\ninstall = [\"{bin}\", \"hook\", \"install\"]\n\
-                 uninstall = [\"{bin}\", \"hook\", \"uninstall\", \"--write\"]\nquery = \"aval-hook\"\n",
+                level(
+                    "machine",
+                    "[\"{bin}\", \"mcp\", \"install\", \"--write\"]",
+                    "[\"{bin}\", \"mcp\", \"uninstall\", \"--write\"]",
+                    claude,
+                    "args = [\"mcp\", \"install\", \"--check\"]\nexit = { present = 0, absent = 1 }",
+                ) + &level(
+                    "repo_level",
+                    "[\"{bin}\", \"hook\", \"install\"]",
+                    "[\"{bin}\", \"hook\", \"uninstall\", \"--write\"]",
+                    "",
+                    "args = [\"hook\", \"uninstall\", \"--check\"]\nexit = { present = 1, absent = 0 }",
+                ),
             ),
             (
                 "gate",
                 "amont",
-                "[part.repo_level]\ninstall = [\"{bin}\", \"init\"]\n\
-                 uninstall = [\"{bin}\", \"uninstall\", \"--repo\"]\nquery = \"amont-list\"\n",
+                level(
+                    "repo_level",
+                    "[\"{bin}\", \"init\"]",
+                    "[\"{bin}\", \"uninstall\", \"--repo\"]",
+                    "",
+                    "args = [\"list\", \"--json\"]\njson = [\"installed\", \"state\"]",
+                ) + "[part.tool.keep_binary]\nargs = [\"list\", \"--json\"]\n\
+                     state = [\"template_dir\", \"state\"]\nabsent = \"absent\"\n\
+                     shims = [\"template_dir\", \"shims\"]\nbinary = \"binary\"\n\
+                     warning = \"repositories armed by hand with it fail their next commit until `amont init` re-arms them\"\n",
             ),
             (
                 "guardrails",
                 "amont-agent",
-                "[part.machine]\ninstall = [\"{bin}\", \"install\", \"--write\"]\n\
-                 uninstall = [\"{bin}\", \"uninstall\", \"--write\"]\nquery = \"amont-agent-doctor\"\n",
+                level(
+                    "machine",
+                    "[\"{bin}\", \"install\", \"--write\"]",
+                    "[\"{bin}\", \"uninstall\", \"--write\"]",
+                    claude,
+                    "args = [\"doctor\", \"--json\"]\njson = [\"integration\", \"state\"]",
+                ),
             ),
         ] {
             let tgz = tarball(&[(&format!("{bin}-1.0.0/{bin}"), FAKE.as_bytes())]);
@@ -134,17 +164,26 @@ impl Fx {
                 )),
                 &tgz,
             );
-            let skills_line = if part == "gate" { "[\"s1\"]" } else { "[]" };
+            let bundle = if part == "gate" {
+                "[part.bundle]\nskills = [\"s1\"]\n"
+            } else {
+                ""
+            };
             catalog.push_str(&format!(
-                "[[part]]\nname = \"{part}\"\nsummary = \"x\"\nneeds = []\nbin = \"{bin}\"\n\
-                 repo = \"fredericrous/{bin}\"\nversion = \"1.0.0\"\nskills = {skills_line}\n\
-                 {extra}[part.sha256]\n{t} = \"{}\"\n",
+                "[[part]]\n[part.extension]\nname = \"{part}\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
+                 summary = \"x\"\nneeds = []\n[part.tool]\nbin = \"{bin}\"\n\
+                 [part.tool.release]\nrepo = \"fredericrous/{bin}\"\nversion = \"1.0.0\"\n\
+                 [part.tool.release.sha256]\n{t} = \"{}\"\n{extra}{bundle}",
                 sha256_hex(&tgz)
             ));
         }
         catalog.push_str(
-            "[[part]]\nname = \"attest\"\nsummary = \"x\"\nneeds = [\"gate\"]\nskills = []\nworkflow = \"attest\"\n\
-             [[part]]\nname = \"design\"\nsummary = \"x\"\nneeds = []\nskills = []\nextension = \"unpublished\"\n",
+            "[[part]]\n[part.extension]\nname = \"attest\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
+             summary = \"x\"\nneeds = [\"gate\"]\n\
+             [[part.repo_file]]\ndirs = [\".forgejo\", \".github\"]\npath = \"workflows/attest.yml\"\n\
+             content = \"name: attest\\non:\\n  pull_request:\\njobs:\\n  attest:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: fredericrous/attest@v1\\n\"\n\
+             [[part]]\n[part.extension]\nname = \"design\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
+             summary = \"x\"\nneeds = []\npublished = false\n",
         );
         put(&fx.root.join("catalog.toml"), catalog.as_bytes());
         fx
@@ -764,4 +803,76 @@ fn audit_of_an_empty_repo_recommends_solo() {
     let (install, warnings) = audit_install(&fx);
     assert_eq!(install, "grh install solo");
     assert!(warnings.is_empty(), "{warnings:?}");
+}
+
+#[test]
+fn a_receipt_written_under_an_alias_is_read_but_never_rewritten() {
+    let fx = Fx::new();
+    let catalog = fs::read_to_string(fx.p("catalog.toml"))
+        .unwrap()
+        .replace("\"gate\"", "\"greengate\"")
+        .replace(
+            "name = \"greengate\"",
+            "name = \"greengate\"\naliases = [\"gate\"]",
+        );
+    put(&fx.p("catalog.toml"), catalog.as_bytes());
+    let bin = fx.p("bin/amont");
+    executable(&bin, FAKE);
+    // A skill placed while the part was still called `gate`: uninstall must
+    // remove it too, through the alias.
+    let skill = fx.p("claude/skills/legacy-gate-skill/SKILL.md");
+    let skill_bytes = b"# a skill placed under the old name\n";
+    put(&skill, skill_bytes);
+    seed_receipt(
+        &fx,
+        &serde_json::json!([
+            {
+                "part": "gate", "level": "machine", "state": "done",
+                "kind": { "binary-adopted": { "path": bin.to_string_lossy() } }
+            },
+            {
+                "part": "gate", "level": "machine", "state": "done",
+                "kind": { "file": {
+                    "path": skill.to_string_lossy(),
+                    "sha256": sha256_hex(skill_bytes),
+                } }
+            }
+        ]),
+    );
+    let parts_named = |fx: &Fx, name: &str| {
+        let v: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
+        v["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|e| e["part"] == name)
+            .count()
+    };
+
+    let o = fx.grh("work", &[], &["status", "--json"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let status: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    let gate = status["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "greengate")
+        .unwrap();
+    assert_eq!(gate["installed"], true);
+    assert_eq!(gate["binary"], bin.to_string_lossy().as_ref());
+    assert_eq!(parts_named(&fx, "gate"), 2);
+
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(parts_named(&fx, "gate"), 2, "{}", fx.receipt());
+    assert!(fx.receipt().contains("binary-adopted"), "{}", fx.receipt());
+
+    let o = fx.grh("work", &[], &["uninstall", "greengate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(parts_named(&fx, "gate"), 0, "{}", fx.receipt());
+    assert_eq!(parts_named(&fx, "greengate"), 0, "{}", fx.receipt());
+    assert!(
+        !skill.exists(),
+        "the skill recorded under `gate` was left behind"
+    );
 }

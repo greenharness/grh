@@ -85,22 +85,12 @@ fn gather(dir: &Path, m: &Manifest) -> Result<(Part, Bundle), Exit> {
         files.insert(format!("agents/{name}.md"), bytes);
         agents.push(name);
     }
-    let part = Part {
-        name: format!("{PREFIX}{}", m.extension.name),
-        summary: format!("extension {} {}", m.extension.name, m.extension.version),
-        needs: Vec::new(),
-        bin: None,
-        repo: None,
-        version: None,
-        sha256: BTreeMap::new(),
-        machine: None,
-        repo_level: None,
+    let part = Part::bundled(
+        format!("{PREFIX}{}", m.extension.name),
+        format!("extension {} {}", m.extension.name, m.extension.version),
         skills,
         agents,
-        hint: None,
-        workflow: None,
-        extension: None,
-    };
+    );
     Ok((part, Bundle::from_files(files)))
 }
 
@@ -146,12 +136,12 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
     let m = Manifest::load(&opts.dir)?;
     let dir = &opts.dir;
     let (part, bundle) = gather(dir, &m)?;
-    let name = part.name.clone();
+    let name = part.name().to_string();
     ui.say("grh will install:");
     ui.say(&format!(
         "  {name}: {} skills, {} agents, {} mcp servers",
-        part.skills.len(),
-        part.agents.len(),
+        part.bundle_skills().len(),
+        part.bundle_agents().len(),
         m.mcp.len()
     ));
     if opts.dry_run {
@@ -166,7 +156,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
     let mut failures: Vec<Exit> = Vec::new();
     let mut sum = Summary::default();
 
-    if !part.skills.is_empty() || !part.agents.is_empty() {
+    if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
         let claude = skills::claude_dir()?;
         let placement = skills::place(&bundle, &part, &claude, &mut store, opts.replace)?;
         ui.ok(&format!(
@@ -342,7 +332,7 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
             }
         }
     }
-    match skills::remove(name, store) {
+    match skills::remove(|recorded| recorded == name, store) {
         Ok(r) => {
             if !r.removed.is_empty() {
                 ui.ok(&format!(

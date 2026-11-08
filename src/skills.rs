@@ -99,7 +99,7 @@ impl Bundle {
     /// The (relative path, bytes) of everything `part` places.
     fn files_for(&self, part: &Part) -> Result<Vec<(&str, &[u8])>, Exit> {
         let mut out = Vec::new();
-        for name in &part.skills {
+        for name in part.bundle_skills() {
             let prefix = format!("skills/{name}/");
             let before = out.len();
             for (p, d) in self.files.range(prefix.clone()..) {
@@ -114,7 +114,7 @@ impl Bundle {
                 )));
             }
         }
-        for name in &part.agents {
+        for name in part.bundle_agents() {
             let p = format!("agents/{name}.md");
             match self.files.get_key_value(&p) {
                 Some((k, d)) => out.push((k.as_str(), d.as_slice())),
@@ -237,7 +237,7 @@ pub fn place(
                 }
                 let to = backup_root.join(rel);
                 let idx = store.begin(Entry::machine(
-                    &part.name,
+                    part.name(),
                     Kind::Backup {
                         path: to.to_string_lossy().into_owned(),
                         from: dest.to_string_lossy().into_owned(),
@@ -248,7 +248,7 @@ pub fn place(
                 out.backups.push((to, dest.clone()));
             }
         }
-        recorded_step(store, &part.name, &dest, &new_sha, || {
+        recorded_step(store, part.name(), &dest, &new_sha, || {
             if write {
                 write_atomic(&dest, data, 0o644)
             } else {
@@ -260,14 +260,16 @@ pub fn place(
     Ok(out)
 }
 
-/// Remove the files the receipt lists for `part`: only those whose sha still
-/// matches; changed and relais-owned files stay and are reported.
-pub fn remove(part: &str, store: &mut Store) -> Result<Removal, Exit> {
+/// Remove the files the receipt lists for a part, the entries whose recorded
+/// part name `is_part` accepts (a catalog part answers to its aliases too):
+/// only those whose sha still matches; changed and relais-owned files stay and
+/// are reported.
+pub fn remove(is_part: impl Fn(&str) -> bool, store: &mut Store) -> Result<Removal, Exit> {
     let mine: Vec<(String, String)> = store
         .receipt
         .entries
         .iter()
-        .filter(|e| e.part == part)
+        .filter(|e| is_part(&e.part))
         .filter_map(|e| match &e.kind {
             Kind::File { path, sha256 } => Some((path.clone(), sha256.clone())),
             _ => None,
@@ -296,7 +298,7 @@ pub fn remove(part: &str, store: &mut Store) -> Result<Removal, Exit> {
     }
     let names: Vec<&str> = mine.iter().map(|(p, _)| p.as_str()).collect();
     store.remove_where(|e| {
-        e.part == part
+        is_part(&e.part)
             && matches!(&e.kind, Kind::File { path, .. } if names.contains(&path.as_str()))
     })?;
     Ok(out)
@@ -357,9 +359,12 @@ mod tests {
             ("skills-0.1.0/agents/rev.md", b"agent v1"),
             ("skills-0.1.0/README.md", b"ignored"),
         ]);
-        let part: Part =
-            toml::from_str("name='p'\nsummary='s'\nneeds=[]\nskills=['alpha']\nagents=['rev']\n")
-                .unwrap();
+        let part = Part::bundled(
+            "p".into(),
+            "s".into(),
+            vec!["alpha".into()],
+            vec!["rev".into()],
+        );
         Env {
             store: Store::open_in(&tmp.path().join("state/grh")).unwrap(),
             bundle: Bundle::from_tarball(&tgz).unwrap(),
@@ -395,7 +400,7 @@ mod tests {
         assert_eq!(shas, vec![sha256_hex(b"agent v1")]);
         assert!(e.store.pending().is_empty());
 
-        let rm = remove("p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &mut e.store).unwrap();
         assert_eq!(rm.removed.len(), 3);
         assert!(rm.kept.is_empty());
         assert!(!e.claude.join("skills/alpha").exists());
@@ -431,7 +436,7 @@ mod tests {
         place(&e.bundle, &e.part, &e.claude, &mut e.store, false).unwrap();
         let f = e.claude.join("agents/rev.md");
         fs::write(&f, b"edited").unwrap();
-        let rm = remove("p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &mut e.store).unwrap();
         assert_eq!(rm.removed.len(), 2);
         assert_eq!(rm.kept.len(), 1);
         assert_eq!(rm.kept[0].path, f);
@@ -465,7 +470,7 @@ mod tests {
             ))
             .unwrap();
         e.store.done(idx).unwrap();
-        let rm = remove("p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &mut e.store).unwrap();
         assert!(rm.kept.iter().any(|s| s.path == f));
         assert_eq!(fs::read(&f).unwrap(), theirs);
     }
