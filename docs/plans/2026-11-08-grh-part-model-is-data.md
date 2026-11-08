@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/part-model-is-data
 repos: [grh]
 adrs: [ADR-0064]
@@ -139,27 +139,27 @@ records them is migrated once.
 
 ## Phases
 
-- [ ] Phase 1 — manifest v2: the types, `HARNESS_VERSION` 0.2, v1
+- [x] Phase 1 — manifest v2: the types, `HARNESS_VERSION` 0.2, v1
   compatibility and the `>=0.2` rule for v2 sections, validation
   (`requires`, `status`, `keep_binary`, `repo_file` paths relative and
   inside the repository):
   `src/manifest.rs`, `docs/extension-manifest.md`.
-- [ ] Phase 2 — the catalog as manifests: `Part` becomes the v2 part type,
+- [x] Phase 2 — the catalog as manifests: `Part` becomes the v2 part type,
   `catalog.toml` rewritten (attest's workflow content, the queries and the
   keep-binary spec move into it; parts renamed with aliases; an `order`
   list), `checked` with the cycle and order checks, `resolve` and
   `dependents` unchanged in behaviour: `src/catalog.rs`, `catalog.toml`.
-- [ ] Phase 3 — generic queries and keep-binary: `src/owner.rs`,
+- [x] Phase 3 — generic queries and keep-binary: `src/owner.rs`,
   `src/uninstall.rs`, `src/status.rs`.
-- [ ] Phase 4 — generic install: repo files, `requires`, bundle skills,
+- [x] Phase 4 — generic install: repo files, `requires`, bundle skills,
   `--extension` through `Run::part`, unpinned manifests show their commands:
   `src/install.rs`, `src/extension.rs`, `src/skills.rs`, `src/ops.rs`,
   `src/main.rs`.
-- [ ] Phase 5 — aliases and the receipt migration: `src/receipt.rs`,
+- [x] Phase 5 — aliases and the receipt migration: `src/receipt.rs`,
   `src/catalog.rs`, `src/dispatch.rs`, `src/main.rs`.
-- [ ] Phase 6 — audit on the generic query (names stay until 2b):
+- [x] Phase 6 — audit on the generic query (names stay until 2b):
   `src/audit.rs`.
-- [ ] Phase 7 — tests, e2e and release 0.2.0: `tests/cli.rs`,
+- [x] Phase 7 — tests, e2e and release 0.2.0: `tests/cli.rs`,
   `scripts/e2e.sh`, `CHANGELOG.md`, `Cargo.toml`, `Cargo.lock`, `README.md`.
 
 ## Decision log
@@ -169,6 +169,12 @@ records them is migrated once.
   because the coupling map found eight hard-coded audit rows and five named
   queries on top of the manifest work; one plan for all of it would not fit
   a session.
+- 2026-11-08 — built through three relais runs (Phases 1–2, 3–4, 5–6) and finished by hand: each review caught a real gap (aliases persisted too early, skills under an old name left behind, the five named queries still in `owner.rs`, a version-1 receipt with no alias left at version 1, audit keeping its own copy of the queries), each fixed with a test proven red without the fix where it mattered.
+- 2026-11-08 — audit finds a part by its binary (`amont`, `amont-agent`, `relais`) rather than by name, so it reads the same declared status query whatever the catalog calls the part; its rows keep their names until plan 2b.
+- 2026-11-08 — "migrated once and never again" is measured on the backup (its bytes and mtime unchanged) and the absent notice, not on the receipt's mtime: an install legitimately writes pending steps to the receipt.
+- 2026-11-08 — Phase 3's grep became a permanent test, `tests/no_part_names.rs`, ahead of plan 2b; 2b widens it to `audit.rs` and wires it into CI as the "names no part" check.
+- 2026-11-08 — reversed during the implementation review: `receipt.json.pre-0.2` is rewritten from the current file whenever that file is older than version 2 (backend: an upgrade, downgrade, upgrade must leave the copy the downgrade restored); a version-2 receipt never overwrites an existing copy.
+- 2026-11-08 — two behaviour changes the review asked to name, both in the CHANGELOG: the keep-binary check reads states with `parse_state` (`installed` counts as present; it keeps more, never fewer), and uninstall refuses an undo it cannot check when the binary is gone.
 
 ## Verification
 
@@ -218,6 +224,21 @@ records them is migrated once.
   warning; Duro's real manifest installs with `--extension` with the same
   output as under 0.1.19.
 
+Observed (2026-11-09, branch `feat/part-model-is-data`):
+- Phase 1 → `src/manifest.rs` tests load Duro's v1 manifest (`tests/fixtures/duro-greenharness.toml`, byte-identical to Duro's) and a v2 one with `[tool.release]` and `[tool.repo_level]`; an unknown key, `^0.1` and a v2 section under `>=0.1` are each refused.
+- Phase 2 → the shipped catalog passes `checked` with every edge pointing down `order`; the cycle, upward-edge, missing-from-order and alias-collision fixtures each fail naming the cause; `resolve(["greengate"])` is greengate alone; a toml string breaking an invariant fails to deserialise into `Catalog`.
+- Phase 3 → the five named queries, `amont_template` and the `name == "gate"` branch are gone; `tests/no_part_names.rs` passes (and catches a part name in a two-line literal); eight keep-binary unit tests, one per branch, plus `installed`.
+- Phase 4 → `tests/cli.rs`: attest's workflow placed from `[[repo_file]]` with the backup and identical-bytes rules; symlinked-out, `..` and absolute paths refused; an extension with a `[tool]` installs, its directory is deleted, and uninstall still undoes it; an adopted extension tool leaves no entry; the unpinned listing (download, commands, doctor, repo files, `requires`) appears on stderr under `--quiet </dev/null` with exit 2.
+- Phase 5 → a seeded `gate` receipt migrates once to version 2 with the original kept in `receipt.json.pre-0.2`; a version-1 receipt with no alias is raised too; upgrade, downgrade, upgrade leaves the second receipt as the backup; with the lock held `grh status` exits 0 and writes nothing; `status --json` parses on the migrating run; `grh gate --version` stdout equals `grh greengate --version`, one warning naming `grh greengate`; `grh uninstall gate` names `grh uninstall greengate`. By hand, not run: grh 0.1.19 reading the backup and refusing version 2 (its version check at `receipt.rs` refuses any newer version).
+- Phase 6 → audit's rows are unchanged with the fake amont installed, and a changed catalog query changes audit's verdict.
+- Phase 7 → `cargo test` (48 cli tests and the unit tests), clippy `-D warnings`, fmt; `scripts/e2e.sh` against amont 2.3.1 and amont-agent 3.23.1: every part installed and placed, nothing left behind, adopted integration and binary left alone, the `gate` alias warning on stderr; Duro's real manifest dry-run gives the same plan as 0.1.18 plus the pre-consent listing. Version 0.2.0, CHANGELOG with the downgrade path; the tag follows the merge.
+
+## Implementation review
+
+- implementation-review: approve (two deltas); fixed: plan record, the edge-error direction, audit advice names, an `installed` test proven red; deliberate: the 20 ms mtime sleep (the bytes check still catches a rewrite); 86k/128 s + 60k/61 s + 37k/11 s.
+- backend: approve (delta); fixed: backup refreshed on every older receipt, unreadable/unknown/gone-binary uninstall messages, `Store::open_migrating`; 55k/64 s + 39k/26 s.
+- lang:rust: approve (delta); fixed: `Catalog` deserialises only checked, rank map, `parse_state`, shell-quoted argv; deliberate: `name_of_alias` allocation, `Serialize` derives; 64k/77 s + 37k/16 s.
+- unix, tui, architect: approve (deltas); fixed: alias notices name the verb, `{bin}` substituted, repo-level `--repo` gap, CHANGELOG downgrade wording, two-line migration notice, `warn_aliases` in the catalog; deliberate: bare binary name in the unpinned listing, runtime-only `repo_file` path check, the JSON path in the keep-binary gap.
 
 ## Outcome
 
