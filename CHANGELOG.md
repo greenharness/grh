@@ -5,6 +5,15 @@ section is missing here.
 
 ## Unreleased
 
+### Changed
+
+- gate and guardrails download from their new homes, `greenharness/greengate`
+  and `greenharness/greenpiste` (Green Harness ADR-0064), and the catalog pins
+  their first releases from there. That is gate's amont 2.3.1 (from 1.64.0;
+  amont 2.0 changed how a push runs its gates, see its CHANGELOG) and
+  guardrails' amont-agent 3.23.1 (from 3.22.0). The binaries keep their names,
+  `amont` and `amont-agent`. Run `grh install gate guardrails` to upgrade.
+
 ## v0.1.18
 
 ### Changed
