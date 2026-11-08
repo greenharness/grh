@@ -58,8 +58,9 @@ and fall back between the two routes.
 
 ## Phases
 
-- [ ] Phase 1 — routes, retries, cache, message, tests: `src/fetch.rs`,
-  `src/skills.rs`, `CHANGELOG.md`
+- [x] Phase 1 — routes, retries, cache, message, tests: `src/fetch.rs`,
+  `CHANGELOG.md` (`src/skills.rs` needs no change: it downloads through
+  `download_verified`)
 - [ ] Phase 2 — release grh, then rebase the skills 0.5.0 pin PR (#24)
 
 ## Decision log
@@ -70,10 +71,22 @@ and fall back between the two routes.
 
 ## Verification
 
-- Unit tests against a local server: web 504 ×3 then API 200 → bytes
-  returned; token set → API tried first and the redirect target never
-  sees `Authorization`; 401 with a token → anonymous API retry; 404 → no
-  retry; same URL twice → one request.
-- `make check` → green.
-- From the laptop during a web-route outage, `grh install full workflow`
-  into a scratch home with every binary off PATH → installs.
+- Unit tests in `src/fetch.rs` against local servers, covering: web 504 ×3
+  then API 200; token → API first, the redirect target never sees
+  `Authorization`; 401 and 403 → anonymous retry; 404 and oversized →
+  one request per route; 429 and a dropped connection → retried; a
+  relative `Location`; the rejected-token message; the same URL twice →
+  one request → observed: `cargo test` "44 passed" (lib) and "30 passed"
+  (cli), 0 failed.
+- The process cache: `downloads_over_http_from_a_local_server` with
+  `download` building a cache per call (the regression the review-fix run
+  introduced) → red "Connect error after 3 attempts"; with
+  `process_cache()` → green.
+- `make check` → exit 0 → observed: exit 0 (27.1 s).
+- From the laptop during the live 2026-11-08 web-route outage, curl of the
+  aval asset → 504; `grh install full workflow --yes` into a scratch home
+  with only `git` on PATH:
+  - first patch, no token → exit 0, 117 s, 8 ✓ 0 ✗; with a token →
+    exit 0, 30 s, 8 ✓ 0 ✗, the token in 0 output lines;
+  - final patch, no token → exit 0, 103 s, 8 ✓ 0 ✗, 8 stderr retry lines
+    and 4 route-switch lines.
