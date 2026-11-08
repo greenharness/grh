@@ -11,8 +11,8 @@
 # / unknown.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.4.0"
-skills_sha256 = "cc0c320ea06276c51fe8b8f8e082931389cc0cef940c128adaa3cd1dd0a0be9b"
+skills_version = "0.5.0"
+skills_sha256 = "9bb0f7796a8f462bc5b20cb716791a7c0f4b1f972747885224c7e24d48e6384d"
 
 [profiles]
 solo = ["gate", "guardrails"]
@@ -127,7 +127,7 @@ name = "workflow"
 summary = "plans reviewed by a panel, one worktree per task, merge on green"
 needs = ["gate", "guardrails"]
 skills = [
-  "plan-review", "worktree-task", "worktree-sweep", "diagnosing-bugs", "retro",
+  "plan-review", "plan-picture", "worktree-task", "worktree-sweep", "diagnosing-bugs", "retro",
   "interface-review", "interface", "accessibility", "layout", "writing",
   "motion-design", "agent-model-fallback",
 ]

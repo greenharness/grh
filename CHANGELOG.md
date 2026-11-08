@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.18
+
+### Changed
+
+- Pins skills 0.5.0: the workflow part gains the `plan-picture` skill. A plan carries a `## Picture` section: an ASCII drawing of the mechanism it builds, or an SVG page beside the plan with a short-hash link when ASCII is too small, or `none: <why>`. `plan-review` runs its checker before seating the panel, the backend reviewer holds the picture to the phases, and `worktree-task` copies a linked picture beside the landed plan; each step is skipped when the skill is not installed. Run `grh install workflow` once after upgrading.
+
 ### Fixed
 
 - Release downloads survive a failing GitHub route: a release URL is retried up to 3 times (about 1 s, then 4 s apart) on a 5xx, 429 or network error, then fetched from the other route (the web URL or the API asset endpoint). With `GH_TOKEN` or `GITHUB_TOKEN` set the API route goes first and the token is sent to the API host only, never to the host an asset redirects to; without one the web URL goes first. `GRH_API_BASE` points the API route at another host. Each URL is downloaded once per process, and the failure message names the URL once with the last status and the routes tried.
