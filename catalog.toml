@@ -46,14 +46,14 @@ name = "gate"
 summary = "what a commit or a push may carry: git hooks"
 needs = []
 bin = "amont"
-repo = "fredericrous/amont"
-version = "1.64.0"
+repo = "greenharness/greengate"
+version = "2.3.1"
 skills = ["relais-verified-push", "merge-when-green", "tag-release"]
 [part.sha256]
-aarch64-apple-darwin = "b8e943c18abc86340b9f22f355cb4259bfba20fbcebf42183c5d5fcd3b638e00"
-x86_64-apple-darwin = "d065f6f7d0df457d71b699fc49fc8bf7347616cb9c2460ae4cd193b97deeb7ca"
-aarch64-unknown-linux-gnu = "9a0393d45159dc8e4dd92e8ca467f3cc2fc6ec655101574642dc16e8a535b8b8"
-x86_64-unknown-linux-gnu = "bf5c07e7f68c99c27bcb5aef9a983a278fc1f5f911fb8840d2baac4662bcc07e"
+aarch64-apple-darwin = "fd0abfa930a965153ff450fc82602ca3f909b2d1933289d62a204af8d721c3cc"
+x86_64-apple-darwin = "e59b4d02be2601a08d808d6be73e2ba10d2f92bb48739fd83150332a66c98461"
+aarch64-unknown-linux-gnu = "7b4c7a2982e6ea3aaa44a1e1ec90c1a0f2a8b92737ab35048017c7b0161cc726"
+x86_64-unknown-linux-gnu = "1c93464178819e192a40706d0ab853f054c05523bac44e2707be2cd48594c37e"
 # `amont init`, never `amont install`: install copies the binary and fills
 # the machine's git template dir, machine state a repo step must not touch.
 [part.repo_level]
@@ -66,14 +66,14 @@ name = "guardrails"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 bin = "amont-agent"
-repo = "fredericrous/amont-agent"
-version = "3.22.0"
+repo = "greenharness/greenpiste"
+version = "3.23.1"
 skills = []
 [part.sha256]
-aarch64-apple-darwin = "782f04738348fc24f52a3ac82228253c29865ea27ab8deaca6c9ed4c678a5273"
-x86_64-apple-darwin = "5498b8bdc5ae216d6e2c04c3d1b73fc6f0e298ab6862fe5829615f7c5c4dec7f"
-aarch64-unknown-linux-gnu = "6ca18b20cb61b749e1df69d1ab6cba0872982b5f5e1de6de1bd91014c2cf20a5"
-x86_64-unknown-linux-gnu = "eb9b3a74ad1b7e413070a6a6c77c231af4a177e8d9714368cf3d3e3766f8b097"
+aarch64-apple-darwin = "3a5d3870fca20ba1ed4514bf1dc116c2e4a66a483359b6ed1b70c0b868695224"
+x86_64-apple-darwin = "cd37589483102e52c64bfd5dd3eb79d410a33cc9acf096349b30d22eb058b886"
+aarch64-unknown-linux-gnu = "66fe403bb6644cadc6179077f52f26977e96167acf2a81f7c27dcaa7959d2e8d"
+x86_64-unknown-linux-gnu = "4e69a29c9e887103c00fecd3a5c931ab7c1897ab18e1083781e99a0820c68edf"
 [part.machine]
 install = ["{bin}", "install", "--write"]
 uninstall = ["{bin}", "uninstall", "--write"]
