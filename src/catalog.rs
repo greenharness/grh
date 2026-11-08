@@ -7,11 +7,13 @@ use serde::Deserialize;
 
 use crate::exit::Exit;
 use crate::manifest::Manifest;
-use crate::ops::text;
+use crate::ops::{text, Ui};
 
 const CATALOG: &str = include_str!("../catalog.toml");
 
+/// Deserialising runs `checked`: no path builds a `Catalog` that skipped it.
 #[derive(Debug, Deserialize)]
+#[serde(try_from = "RawCatalog")]
 pub struct Catalog {
     pub skills_repo: String,
     pub skills_version: String,
@@ -21,6 +23,43 @@ pub struct Catalog {
     pub order: Vec<String>,
     #[serde(rename = "part")]
     pub parts: Vec<Part>,
+}
+
+/// The catalog as the file spells it, before `Catalog::checked`.
+#[derive(Deserialize)]
+struct RawCatalog {
+    skills_repo: String,
+    skills_version: String,
+    skills_sha256: String,
+    profiles: BTreeMap<String, Vec<String>>,
+    order: Vec<String>,
+    #[serde(rename = "part")]
+    parts: Vec<Part>,
+}
+
+impl TryFrom<RawCatalog> for Catalog {
+    type Error = String;
+
+    fn try_from(raw: RawCatalog) -> Result<Catalog, String> {
+        Catalog {
+            skills_repo: raw.skills_repo,
+            skills_version: raw.skills_version,
+            skills_sha256: raw.skills_sha256,
+            profiles: raw.profiles,
+            order: raw.order,
+            parts: raw.parts,
+        }
+        .checked()
+        .map_err(|e| text(&e))
+    }
+}
+
+/// The command a name was typed for, so a notice can name its replacement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Verb {
+    Install,
+    Uninstall,
+    Dispatch,
 }
 
 /// A catalog entry is a manifest like any extension's.
@@ -62,8 +101,7 @@ impl Catalog {
 
     /// Parse a catalog and refuse one `resolve` could not walk.
     pub fn parse(source: &str) -> Result<Catalog, Exit> {
-        let catalog: Catalog = toml::from_str(source).map_err(|e| Exit::Failed(e.to_string()))?;
-        catalog.checked()
+        toml::from_str(source).map_err(|e| Exit::Failed(e.to_string()))
     }
 
     /// Every part is a valid manifest; names and aliases are unique; every
@@ -177,12 +215,18 @@ impl Catalog {
     }
 
     fn check_edges_point_down(&self) -> Result<(), Exit> {
-        let rank = |name: &str| self.order.iter().position(|n| n == name);
+        let ranks: BTreeMap<&str, usize> = self
+            .order
+            .iter()
+            .enumerate()
+            .map(|(rank, name)| (name.as_str(), rank))
+            .collect();
+        let rank = |name: &str| ranks.get(name).copied();
         for part in &self.parts {
             for edge in self.edges(part.name()) {
                 if rank(edge) >= rank(part.name()) {
                     return Err(invalid(format!(
-                        "{} points up order to {edge}: an edge names an earlier part",
+                        "{} points up order to {edge}: the edge names a part at or after it in order",
                         part.name()
                     )));
                 }
@@ -209,14 +253,31 @@ impl Catalog {
     }
 
     /// The notice for a part asked for by an alias, `None` for its own name.
-    pub fn alias_notice(&self, name: &str) -> Option<String> {
+    pub fn alias_notice(&self, name: &str, verb: Verb) -> Option<String> {
         if self.parts.iter().any(|p| p.name() == name) {
             return None;
         }
         let canonical = self.name_of_alias(name)?;
-        Some(format!(
-            "{name} is now {canonical}: run grh install {canonical}"
-        ))
+        let command = match verb {
+            Verb::Install => format!("grh install {canonical}"),
+            Verb::Uninstall => format!("grh uninstall {canonical}"),
+            Verb::Dispatch => format!("grh {canonical}"),
+        };
+        Some(format!("{name} is now {canonical}: run {command}"))
+    }
+
+    /// One warning per alias among `names`, naming the command to use instead.
+    pub fn warn_aliases(&self, ui: &Ui, names: &[String], verb: Verb) {
+        let mut seen: Vec<&String> = Vec::new();
+        for name in names {
+            if seen.contains(&name) {
+                continue;
+            }
+            seen.push(name);
+            if let Some(notice) = self.alias_notice(name, verb) {
+                ui.warn(&notice);
+            }
+        }
     }
 
     /// Parts and profiles named on the command line, expanded, with every
@@ -343,6 +404,16 @@ mod tests {
         }
         assert_eq!(c.part("gate").unwrap().name(), "greengate");
         assert_eq!(c.part("guardrails").unwrap().name(), "greenpiste");
+    }
+
+    #[test]
+    fn a_toml_string_that_breaks_an_invariant_does_not_deserialise_into_a_catalog() {
+        let source = fixture(
+            &["a", "b"],
+            &[("a", &["b"], &[], &[]), ("b", &[], &[], &[])],
+        );
+        let error = toml::from_str::<Catalog>(&source).unwrap_err().to_string();
+        assert!(error.contains("at or after it in order"), "{error}");
     }
 
     #[test]

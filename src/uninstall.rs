@@ -44,7 +44,7 @@ fn canonical(cat: &Catalog, name: &str) -> String {
 
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
-    crate::install::warn_aliases(&ui, cat, &opts.names);
+    cat.warn_aliases(&ui, &opts.names, crate::catalog::Verb::Uninstall);
     let only_repo = if opts.repo { Some(git_root()?) } else { None };
     let state_dir = receipt::state_dir()?;
     let mut before = receipt::read_in(&state_dir)?;
@@ -150,8 +150,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
 
-    let mut store = Store::open_in(&state_dir)?;
-    store.migrate(|name| cat.name_of_alias(name))?;
+    let mut store = Store::open_migrating(|name| cat.name_of_alias(name))?;
     let mut sum = Summary::default();
     let mut failures: Vec<Exit> = Vec::new();
     for part in &todo {
@@ -446,25 +445,42 @@ fn undo_tool(
         }
         .and_then(|level| level.status.clone())
     });
-    let status = catalog_status
-        .or_else(|| recorded.and_then(|raw| Status::try_from(raw.clone()).ok()))
-        .ok_or_else(|| {
-            "no status query is declared or recorded for this integration".to_string()
-        })?;
-    let code = run_tool(ui, undo_argv, cwd)?;
-    let state = match bin {
-        Some(b) => owner::run_status(&status, b, cwd),
-        None => Answer::Unknown,
+    let status = match (catalog_status, recorded) {
+        (Some(status), _) => status,
+        (None, Some(raw)) => Status::try_from(raw.clone())
+            .map_err(|e| format!("the recorded status query is invalid: {e}"))?,
+        (None, None) => {
+            return Err("no status query is declared or recorded for this integration".to_string());
+        }
     };
-    if state == Answer::Absent {
-        ui.ok(&format!("{name}: integration removed"));
-        Ok(())
-    } else {
-        Err(format!(
+    let Some(bin) = bin else {
+        return Err(format!(
+            "the binary of {name} is gone, so the integration cannot be undone or checked"
+        ));
+    };
+    let code = run_tool(ui, undo_argv, cwd)?;
+    let state = owner::run_status(&status, bin, cwd);
+    match state {
+        Answer::Absent => {
+            ui.ok(&format!("{name}: integration removed"));
+            Ok(())
+        }
+        Answer::Unknown => {
+            let mut query = vec![bin
+                .file_name()
+                .map_or_else(|| name.to_string(), |n| n.to_string_lossy().into_owned())];
+            query.extend(status.args.iter().cloned());
+            Err(format!(
+                "{} exited {code}, and the status query `{}` gave no answer grh recognises",
+                crate::ops::command_line(undo_argv),
+                crate::ops::command_line(&query)
+            ))
+        }
+        Answer::Present | Answer::Partial => Err(format!(
             "{} exited {code} and the integration still reports {}",
-            undo_argv.join(" "),
+            crate::ops::command_line(undo_argv),
             state.as_str()
-        ))
+        )),
     }
 }
 
@@ -560,8 +576,12 @@ fn remove_binary(
                                     sum.gap(
                                         &format!("{path} kept: {why}"),
                                         &format!(
-                                            "grh uninstall {name}, once `{path} {}` reports {} at {}",
-                                            spec.args.join(" "),
+                                            "grh uninstall {name}, once `{}` reports {} at {}",
+                                            crate::ops::command_line(
+                                                &std::iter::once(path.to_string())
+                                                    .chain(spec.args.iter().cloned())
+                                                    .collect::<Vec<_>>()
+                                            ),
                                             spec.absent,
                                             spec.state.join(".")
                                         ),

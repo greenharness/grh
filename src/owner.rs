@@ -152,7 +152,9 @@ fn json_at<'a>(v: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_js
 /// answer keeps the binary.
 pub fn keep_binary(spec: &KeepBinary, bin_name: &str, bin: &Path, placed: &str) -> Template {
     let args: Vec<&str> = spec.args.iter().map(String::as_str).collect();
-    let command = format!("{bin_name} {}", spec.args.join(" "));
+    let mut argv = vec![bin_name.to_string()];
+    argv.extend(spec.args.iter().cloned());
+    let command = crate::ops::command_line(&argv);
     let Some((0, text)) = ask(bin, &args, None) else {
         return Template::Keep(format!("`{command}` failed"));
     };
@@ -163,14 +165,16 @@ pub fn keep_binary(spec: &KeepBinary, bin_name: &str, bin: &Path, placed: &str) 
     let state = json_at(&v, &spec.state)
         .and_then(serde_json::Value::as_str)
         .map(str::to_ascii_lowercase);
+    let absent = spec.absent.to_ascii_lowercase();
     match state.as_deref() {
-        Some(word) if word == spec.absent.to_ascii_lowercase() => Template::Gone,
-        Some("present" | "partial") => {
+        Some(word) if word == absent => Template::Gone,
+        Some(word) if matches!(parse_state(word), Answer::Present | Answer::Partial) => {
+            let placed_real = std::fs::canonicalize(placed).ok();
             let same = |b: &str| {
                 b == placed
                     || std::fs::canonicalize(b)
                         .ok()
-                        .is_some_and(|c| std::fs::canonicalize(placed).ok().is_some_and(|p| p == c))
+                        .is_some_and(|c| placed_real.as_ref() == Some(&c))
             };
             // Every shim must name its binary; anything less is an answer
             // grh cannot read, and an unreadable answer never authorises a

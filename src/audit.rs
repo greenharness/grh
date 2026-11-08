@@ -130,6 +130,14 @@ fn declared_state(cat: &Catalog, bin: &str, repo_level: bool, repo: Option<&Path
         .unwrap_or(Answer::Unknown)
 }
 
+/// What the catalog calls the part carrying binary `bin`, else `bin` itself.
+fn part_named_for(cat: &Catalog, bin: &str) -> String {
+    cat.parts
+        .iter()
+        .find(|p| p.bin() == Some(bin))
+        .map_or_else(|| bin.to_string(), |p| p.name().to_string())
+}
+
 pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
     let root = git(given, &["rev-parse", "--show-toplevel"])
@@ -153,6 +161,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Hooks.
     let mut hooks: Vec<String> = Vec::new();
+    let gate_part = part_named_for(cat, "amont");
     let amont_state = declared_state(cat, "amont", true, Some(&root));
     if amont_state == Answer::Present {
         hooks.push("amont".into());
@@ -161,7 +170,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     if let Some(p) = &hooks_path {
         hooks.push(format!("core.hooksPath={p}"));
         warnings.push(format!(
-            "core.hooksPath redirects git hooks to {p}; amont refuses a redirected hooks path: unset it before grh install gate"
+            "core.hooksPath redirects git hooks to {p}; amont refuses a redirected hooks path: unset it before grh install {gate_part}"
         ));
     }
     let mut managers: Vec<&str> = Vec::new();
@@ -180,7 +189,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     for m in &managers {
         hooks.push((*m).to_string());
         warnings.push(format!(
-            "{m} already manages git hooks here; the gate part (amont) installs its own hooks next to it: check they do not clash"
+            "{m} already manages git hooks here; the {gate_part} part (amont) installs its own hooks next to it: check they do not clash"
         ));
     }
     if amont_state != Answer::Present {

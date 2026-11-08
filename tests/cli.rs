@@ -1180,15 +1180,44 @@ fn a_version_1_receipt_with_no_alias_is_still_raised_to_version_2() {
 }
 
 #[test]
-fn an_existing_pre_0_2_copy_is_never_overwritten() {
+fn upgrade_downgrade_upgrade_leaves_the_second_version_1_receipt_as_the_backup() {
     let fx = alias_fx();
-    seed_gate_receipt(&fx);
-    put(&fx.p("state/grh/receipt.json.pre-0.2"), b"kept\n");
+    let first = seed_gate_receipt(&fx);
+    let backup = fx.p("state/grh/receipt.json.pre-0.2");
     let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
-    assert_eq!(
-        fs::read_to_string(fx.p("state/grh/receipt.json.pre-0.2")).unwrap(),
-        "kept\n"
+    assert_eq!(fs::read_to_string(&backup).unwrap(), first);
+
+    // A downgrade restores a different version-1 receipt, B.
+    let second = {
+        let doc = serde_json::json!({ "version": 1, "entries": [] });
+        format!("{doc}\n")
+    };
+    put(&fx.p("state/grh/receipt.json"), second.as_bytes());
+    let o = fx.grh("work", &[], &["install", "greengate", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fs::read_to_string(&backup).unwrap(), second);
+}
+
+#[test]
+fn uninstalling_by_an_alias_names_the_uninstall_command() {
+    let fx = alias_fx();
+    let o = fx.grh("work", &[], &["uninstall", "gate", "--dry-run"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let notice = "gate is now greengate: run grh uninstall greengate";
+    assert_eq!(err(&o).matches(notice).count(), 1, "{}", err(&o));
+}
+
+#[test]
+fn the_install_plan_shows_the_binary_name_never_the_placeholder() {
+    let fx = Fx::new();
+    let o = fx.grh("work", &[], &["install", "solo", "--dry-run"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let plan = String::from_utf8_lossy(&o.stdout).into_owned() + &err(&o);
+    assert!(!plan.contains("{bin}"), "{plan}");
+    assert!(
+        plan.contains("machine: amont-agent install --write"),
+        "{plan}"
     );
 }
 
@@ -1242,7 +1271,7 @@ fn a_part_run_through_its_alias_warns_before_the_exec_and_keeps_stdout() {
     assert_eq!(code(&by_alias), 0, "{}", err(&by_alias));
     assert!(!by_alias.stdout.is_empty());
     assert_eq!(by_alias.stdout, by_name.stdout);
-    let notice = "gate is now greengate: run grh install greengate";
+    let notice = "gate is now greengate: run grh greengate";
     assert_eq!(err(&by_alias).matches(notice).count(), 1);
     assert!(!err(&by_name).contains(notice));
 }

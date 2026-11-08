@@ -3,7 +3,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::catalog::{Catalog, Part, Unknown};
+use crate::catalog::{Catalog, Part, Unknown, Verb};
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
@@ -56,7 +56,7 @@ pub fn show_commands(part: &Part) {
             .collect()
     };
     eprintln!(
-        "{} is not pinned by grh's catalog; it would run:",
+        "{} is not pinned by grh's catalog; it would run and use:",
         part.name()
     );
     if let Some(release) = part.release() {
@@ -126,6 +126,14 @@ impl<'a> Run<'a> {
     }
 }
 
+/// `argv` with `{bin}` replaced by the part's binary name, as the plan shows it.
+fn bin_substituted(part: &Part, argv: &[String]) -> Vec<String> {
+    match part.bin() {
+        Some(bin) => subst(argv, Path::new(bin)),
+        None => argv.to_vec(),
+    }
+}
+
 fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     ui.say("grh will install:");
     for part in parts {
@@ -139,13 +147,13 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
         if let Some(machine) = part.machine() {
             ui.say(&format!(
                 "      machine: {} (unless already present)",
-                machine.install.join(" ")
+                command_line(&bin_substituted(part, &machine.install))
             ));
         }
         if let (Some(r), Some(_)) = (part.repo_level(), repo) {
             ui.say(&format!(
                 "      repo: {} (unless already present)",
-                r.install.join(" ")
+                command_line(&bin_substituted(part, &r.install))
             ));
         }
         if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
@@ -167,26 +175,12 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     }
 }
 
-/// One warning per alias among `names`, naming the part to use instead.
-pub fn warn_aliases(ui: &Ui, cat: &Catalog, names: &[String]) {
-    let mut seen: Vec<&String> = Vec::new();
-    for name in names {
-        if seen.contains(&name) {
-            continue;
-        }
-        seen.push(name);
-        if let Some(notice) = cat.alias_notice(name) {
-            ui.warn(&notice);
-        }
-    }
-}
-
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
     if opts.names.is_empty() {
         return Err(Exit::Usage(listing(cat)));
     }
-    warn_aliases(&ui, cat, &opts.names);
+    cat.warn_aliases(&ui, &opts.names, Verb::Install);
     let parts = cat.resolve(&opts.names).map_err(|Unknown::Name(n)| {
         Exit::Usage(format!("unknown part or profile: {n}\n{}", listing(cat)))
     })?;
@@ -200,8 +194,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let mut store = Store::open()?;
-    store.migrate(|name| cat.name_of_alias(name))?;
+    let store = Store::open_migrating(|name| cat.name_of_alias(name))?;
     let mut run = Run::new(Some(cat), ui, store, opts.replace, repo, None);
     let mut failures: Vec<Exit> = Vec::new();
     for part in &parts {
@@ -415,7 +408,13 @@ impl Run<'_> {
                 &format!(
                     "{name}: {missing} is not on PATH, so its {which} integration was not installed"
                 ),
-                &format!("install {missing}, then grh install {name}"),
+                &if level == Level::Repo {
+                    format!(
+                        "install {missing}, then grh install {name} --repo, from the repository"
+                    )
+                } else {
+                    format!("install {missing}, then grh install {name}")
+                },
             );
             self.ui.warn(&format!(
                 "{name}: {missing} not found, {which} integration skipped"
@@ -487,7 +486,7 @@ impl Run<'_> {
                             &format!("finish or remove it with {name}'s own commands, then grh install {name}"),
                         );
                         self.ui.warn(&format!(
-                            "{name}: {which} integration partial, adopted gap, not touched"
+                            "{name}: {which} integration partial, partly installed by someone else, left alone"
                         ));
                         return Ok(());
                     }
@@ -519,7 +518,7 @@ impl Run<'_> {
                     // uninstall will run the undo and check.
                     Err(Exit::Failed(format!(
                         "{} exited {code} and the {which} integration is not confirmed present",
-                        argv.join(" ")
+                        command_line(&argv)
                     )))
                 }
             }
@@ -679,7 +678,11 @@ impl Run<'_> {
 fn status_command(part: &Part, level: &ToolLevel) -> String {
     let bin = part.bin().unwrap_or_default();
     match &level.status {
-        Some(status) => format!("{bin} {}", status.args.join(" ")),
+        Some(status) => {
+            let mut argv = vec![bin.to_string()];
+            argv.extend(status.args.iter().cloned());
+            command_line(&argv)
+        }
         None => format!("{bin}: no status declared"),
     }
 }

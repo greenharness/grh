@@ -169,8 +169,7 @@ pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let mut store = Store::open()?;
-    store.migrate(|name| catalog.name_of_alias(name))?;
+    let store = Store::open_migrating(|name| catalog.name_of_alias(name))?;
     let mut run = Run::new(None, ui, store, opts.replace, repo, Some(bundle));
     let mut failures: Vec<Exit> = run.part(&part);
     let (ui, mut store, mut sum) = run.into_parts();
@@ -247,7 +246,7 @@ pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
                 // The add did not happen: drop its pending step.
                 store.receipt.entries.remove(idx);
                 store.save()?;
-                let e = Exit::Failed(format!("{} exited {code}", argv.join(" ")));
+                let e = Exit::Failed(format!("{} exited {code}", crate::ops::command_line(&argv)));
                 ui.fail(&format!("{name}: {}", crate::ops::text(&e)));
                 failures.push(e);
             }
@@ -323,7 +322,7 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
                     (_, Some(Ok(false))) => Ok(()),
                     (Ok(code), _) => Err(format!(
                         "{} exited {code} and the server is not confirmed gone; entry kept",
-                        undo_argv.join(" ")
+                        crate::ops::command_line(undo_argv)
                     )),
                     (Err(m), _) => Err(format!("{m}; entry kept")),
                 }

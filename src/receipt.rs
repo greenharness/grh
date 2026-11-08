@@ -273,13 +273,22 @@ pub struct Store {
 }
 
 impl Store {
-    /// Lock and load the receipt in the default state directory.
-    pub fn open() -> Result<Store, Exit> {
-        Store::open_in(&state_dir()?)
+    /// Lock the receipt in the default state directory, load it and migrate
+    /// it (see `migrate`): the only way a command gets a locked store, so none
+    /// holds one that is not at `VERSION`.
+    pub fn open_migrating(rename: impl Fn(&str) -> Option<String>) -> Result<Store, Exit> {
+        let mut store = Store::lock_in(&state_dir()?)?;
+        store.migrate(rename)?;
+        Ok(store)
     }
 
-    /// Lock and load the receipt in `dir` (the `grh` state directory).
+    /// Lock and load the receipt in `dir`, unmigrated.
+    #[cfg(test)]
     pub fn open_in(dir: &Path) -> Result<Store, Exit> {
+        Store::lock_in(dir)
+    }
+
+    fn lock_in(dir: &Path) -> Result<Store, Exit> {
         fs::create_dir_all(dir)
             .map_err(|e| Exit::Failed(format!("cannot create {}: {e}", dir.display())))?;
         let lock_path = dir.join("receipt.lock");
@@ -326,9 +335,15 @@ impl Store {
     /// whenever the file on disk is older, renames or not: a version-1 file
     /// left at 1 would be read by grh 0.1.x while holding 0.2-only names.
     /// Only a command holding this store's lock gets here. The receipt as it
-    /// was is copied to `receipt.json.pre-0.2` first, once: an existing copy
-    /// is kept. Says what it did on stderr, even under `--quiet`.
-    pub fn migrate(&mut self, rename: impl Fn(&str) -> Option<String>) -> Result<(), Exit> {
+    /// was is copied to `receipt.json.pre-0.2` first: every time the file on
+    /// disk is older than `VERSION` (a downgrade and an upgrade again must
+    /// leave the copy of the receipt the downgrade restored; after a crash
+    /// the file still equals the original). A receipt already at `VERSION`
+    /// that still holds an old name (a part renamed after the file reached
+    /// version 2) is copied only when no copy exists, so the copy a
+    /// downgrade needs is never replaced by a version-2 file.
+    /// Says what it did on stderr, even under `--quiet`.
+    fn migrate(&mut self, rename: impl Fn(&str) -> Option<String>) -> Result<(), Exit> {
         let mut renames: Vec<(String, String)> = Vec::new();
         for entry in &self.receipt.entries {
             if let Some(canonical) = rename(&entry.part) {
@@ -344,7 +359,7 @@ impl Store {
             return Ok(());
         }
         let backup = self.dir.join("receipt.json.pre-0.2");
-        if !backup.exists() {
+        if older || !backup.exists() {
             let bytes = fs::read(&original)
                 .map_err(|e| Exit::Failed(format!("cannot read {}: {e}", original.display())))?;
             write_atomic(&backup, &bytes, 0o644)?;
@@ -362,9 +377,12 @@ impl Store {
             format!("renamed {}", renamed.join(", "))
         };
         eprintln!(
-            "migrated {} to version {VERSION}: the old receipt is kept as {}; {what}",
-            original.display(),
-            backup.display(),
+            "migrated {} to version {VERSION}: {what}",
+            original.display()
+        );
+        eprintln!(
+            "the old receipt is kept as {}; the CHANGELOG explains the way back to grh 0.1.x",
+            backup.display()
         );
         Ok(())
     }

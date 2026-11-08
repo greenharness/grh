@@ -232,7 +232,7 @@ pub fn run_tool(ui: &Ui, argv: &[String], cwd: Option<&Path>) -> Result<i32, Str
     let Some((prog, args)) = argv.split_first() else {
         return Err("empty command".into());
     };
-    ui.say(&format!("  $ {}", argv.join(" ")));
+    ui.say(&format!("  $ {}", command_line(argv)));
     let mut cmd = Command::new(prog);
     cmd.args(args).stdin(Stdio::null());
     if let Some(d) = cwd {
