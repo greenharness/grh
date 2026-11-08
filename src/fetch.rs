@@ -126,11 +126,13 @@ impl Hit {
             Hit::Fatal(_) => false,
         }
     }
+}
 
-    fn text(&self) -> String {
+impl std::fmt::Display for Hit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Hit::Status(code) => format!("HTTP {code}"),
-            Hit::Transient(text) | Hit::Fatal(text) => text.clone(),
+            Hit::Status(code) => write!(f, "HTTP {code}"),
+            Hit::Transient(text) | Hit::Fatal(text) => f.write_str(text),
         }
     }
 }
@@ -146,11 +148,7 @@ struct RouteFailure {
 impl RouteFailure {
     fn describe(&self) -> String {
         let plural = if self.attempts == 1 { "" } else { "s" };
-        let last = format!(
-            "{} after {} attempt{plural}",
-            self.hit.text(),
-            self.attempts
-        );
+        let last = format!("{} after {} attempt{plural}", self.hit, self.attempts);
         match self.token_rejected {
             Some(code) => format!("token rejected (HTTP {code}), anonymous: {last}"),
             None => last,
@@ -229,21 +227,31 @@ fn read_limited(resp: ureq::Response, max_bytes: u64) -> Result<Vec<u8>, Hit> {
 }
 
 /// Resolve a `Location` against the URL that sent it: an absolute URL stays,
-/// a path starting with `/` takes that URL's scheme and host.
-fn resolve_location(from: &str, location: &str) -> String {
-    if !location.starts_with('/') {
-        return location.to_string();
+/// `//host/…` takes that URL's scheme, `/path` its scheme and host. Anything
+/// else (`../x`, a bare name) is refused rather than guessed.
+fn resolve_location(from: &str, location: &str) -> Result<String, Hit> {
+    let Some(scheme_end) = from.find("://") else {
+        return Err(Hit::Fatal(format!("cannot resolve Location {location}")));
+    };
+    let is_absolute = location
+        .split_once("://")
+        .is_some_and(|(scheme, _)| !scheme.is_empty() && !scheme.contains('/'));
+    if is_absolute {
+        return Ok(location.to_string());
     }
-    let origin_end = from
-        .find("://")
-        .map(|scheme_end| scheme_end + 3)
-        .and_then(|host_start| {
-            from[host_start..]
-                .find('/')
-                .map(|path_start| host_start + path_start)
-        })
-        .unwrap_or(from.len());
-    format!("{}{location}", &from[..origin_end])
+    if location.starts_with("//") {
+        return Ok(format!("{}:{location}", &from[..scheme_end]));
+    }
+    if location.starts_with('/') {
+        let host_start = scheme_end + 3;
+        let origin_end = from[host_start..]
+            .find('/')
+            .map_or(from.len(), |path_start| host_start + path_start);
+        return Ok(format!("{}{location}", &from[..origin_end]));
+    }
+    Err(Hit::Fatal(format!(
+        "relative Location {location} not followed"
+    )))
 }
 
 /// Follow redirects by hand so `bearer` only ever goes to the first host.
@@ -262,7 +270,7 @@ fn get_following(
             let location = resp
                 .header("location")
                 .ok_or_else(|| Hit::Fatal(format!("HTTP {} without a location", resp.status())))?;
-            url = resolve_location(&url, location);
+            url = resolve_location(&url, location)?;
             token = None;
             continue;
         }
@@ -322,8 +330,8 @@ fn with_retries(
             Err(hit) if hit.retryable() && attempts < ATTEMPTS => {
                 let delay = routes.backoff[attempts - 1];
                 routes.say(&format!(
-                    "grh: {url}: {}, retry {attempts}/{ATTEMPTS} in {} s",
-                    hit.text(),
+                    "grh: {url}: {hit}, attempt {}/{ATTEMPTS} in {} s",
+                    attempts + 1,
                     delay.as_secs()
                 ));
                 std::thread::sleep(delay);
@@ -858,7 +866,7 @@ mod tests {
         assert_eq!(seen.lock().unwrap().len(), 2);
         assert_eq!(
             *lines.lock().unwrap(),
-            vec![format!("grh: {url}: HTTP 429, retry 1/3 in 0 s")]
+            vec![format!("grh: {url}: HTTP 429, attempt 2/3 in 0 s")]
         );
     }
 
@@ -867,10 +875,31 @@ mod tests {
         use std::io::Write;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
+        listener.set_nonblocking(true).unwrap();
+        // A deadline on each accept: a client that never reconnects fails the
+        // test instead of hanging it.
+        let accept = move |listener: &std::net::TcpListener| {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            loop {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        return stream;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "no connection within 10 s"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("accept failed: {e}"),
+                }
+            }
+        };
         let server = std::thread::spawn(move || {
-            let (silent, _) = listener.accept().unwrap();
-            drop(silent);
-            let (mut answered, _) = listener.accept().unwrap();
+            drop(accept(&listener));
+            let mut answered = accept(&listener);
             let mut head = Vec::new();
             let mut byte = [0u8; 1];
             while !head.ends_with(b"\r\n\r\n") && answered.read(&mut byte).unwrap_or(0) == 1 {
@@ -885,7 +914,32 @@ mod tests {
         assert_eq!(fetch(&url, &routes).unwrap(), b"BACK");
         server.join().unwrap();
         assert_eq!(lines.lock().unwrap().len(), 1);
-        assert!(lines.lock().unwrap()[0].contains("retry 1/3"));
+        assert!(lines.lock().unwrap()[0].contains("attempt 2/3"));
+    }
+
+    #[test]
+    fn a_location_resolves_or_is_refused() {
+        let from = "http://h:1/a/b";
+        assert_eq!(
+            resolve_location(from, "https://x/y").ok().as_deref(),
+            Some("https://x/y")
+        );
+        assert_eq!(
+            resolve_location(from, "//cdn/p").ok().as_deref(),
+            Some("http://cdn/p")
+        );
+        assert_eq!(
+            resolve_location(from, "/p?q=1").ok().as_deref(),
+            Some("http://h:1/p?q=1")
+        );
+        assert_eq!(
+            resolve_location("http://h:1", "/p").ok().as_deref(),
+            Some("http://h:1/p")
+        );
+        for relative in ["../x", "final", "p/q?u=http://z"] {
+            let refused = resolve_location(from, relative);
+            assert!(matches!(refused, Err(Hit::Fatal(_))), "{relative}");
+        }
     }
 
     #[test]
@@ -951,9 +1005,19 @@ mod tests {
 
     #[test]
     fn resolving_a_location_keeps_absolute_urls_and_joins_paths() {
-        assert_eq!(resolve_location("http://h:1/a/b?q=1", "/c"), "http://h:1/c");
-        assert_eq!(resolve_location("http://h:1", "/c"), "http://h:1/c");
-        assert_eq!(resolve_location("http://h/a", "https://o/z"), "https://o/z");
+        let resolved = |from, location| resolve_location(from, location).ok();
+        assert_eq!(
+            resolved("http://h:1/a/b?q=1", "/c").as_deref(),
+            Some("http://h:1/c")
+        );
+        assert_eq!(
+            resolved("http://h:1", "/c").as_deref(),
+            Some("http://h:1/c")
+        );
+        assert_eq!(
+            resolved("http://h/a", "https://o/z").as_deref(),
+            Some("https://o/z")
+        );
     }
 
     #[test]
