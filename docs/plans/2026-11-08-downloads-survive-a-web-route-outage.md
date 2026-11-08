@@ -38,8 +38,7 @@ and fall back between the two routes.
 
 ## Code review
 
-- grh: lang:rust, backend (unix left out: no command-line surface change
-  beyond one error message)
+- grh: lang:rust, backend (unix left out: only one error message changes)
 
 ## Behaviour
 
