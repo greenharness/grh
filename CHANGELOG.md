@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.1.17
+
+### Changed
+
+- Pins skills 0.4.0: the workflow part gains generic `plan-review-ui-design` and `plan-review-react` seats, and `plan-review` fills their design-system lookup slot from an installed `design-system-lookup` agent (the `design` extension ships one). Run `grh install workflow` once after upgrading.
+- Pins adr-lint 0.17.0 for `conform`: its TypeScript sync targets `@aval-adr/eslint-config` (0.16.0 or later), which now also ships the `base`, `effect` and `tests` presets.
+
 ## v0.1.16
 
 ### Changed

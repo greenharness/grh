@@ -11,8 +11,8 @@
 # / unknown.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.3.11"
-skills_sha256 = "108b2421ac70188f7e950808815e59fa1bef693ae2bafbb355db1cad2fd3bb99"
+skills_version = "0.4.0"
+skills_sha256 = "cc0c320ea06276c51fe8b8f8e082931389cc0cef940c128adaa3cd1dd0a0be9b"
 
 [profiles]
 solo = ["gate", "guardrails"]
@@ -103,16 +103,16 @@ summary = "which decided code rules a tree breaks, by lint"
 needs = ["decisions"]
 bin = "adr-lint"
 repo = "fredericrous/adr-lint"
-version = "0.10.0"
+version = "0.17.0"
 skills = []
 # Repo level writes nothing: `adr-lint sync` rewrites lint configs the
 # repository owns, so grh prints the commands instead.
 hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
 [part.sha256]
-aarch64-apple-darwin = "b74785a59a2288ed93dc3422964ac0125ac2d6e0412756a6b318c600c8e831f2"
-x86_64-apple-darwin = "973420c1801ab80666617de6fe0b6df94fcf1e34c646a2d8513cce56639bd866"
-aarch64-unknown-linux-gnu = "b909f7d5fd47179f59e70654b7df8b8243f907e30b8e655f50788746c6db9093"
-x86_64-unknown-linux-gnu = "a945cda1cb28202717c1dd1b5adc0cb7f46405a5c6c6027ca1adc1c5a5ee13bf"
+aarch64-apple-darwin = "5e8caa567fcb110d242eaad5b908f9863bad3af772dbb3e2cb017274bbc233d3"
+x86_64-apple-darwin = "e6d495d97c3f12d314b27aea57f1164d16701851ee56428369aaf2c29c786b14"
+aarch64-unknown-linux-gnu = "17282fe138c814a01b89865653ef1c309983823d220003efcf35799bff685b79"
+x86_64-unknown-linux-gnu = "3cd150e8539c733c84bb6c21092beb35700f54b5ddbc7ea1ee5b6b588b921b46"
 
 [[part]]
 name = "attest"
@@ -138,7 +138,8 @@ agents = [
   "code-review-unix",
   "plan-review-architect", "plan-review-backend", "plan-review-game-ux",
   "plan-review-language", "plan-review-platform", "plan-review-po",
-  "plan-review-tui", "plan-review-unix", "plan-review-ux-research",
+  "plan-review-react", "plan-review-tui", "plan-review-ui-design",
+  "plan-review-unix", "plan-review-ux-research",
 ]
 
 [[part]]
