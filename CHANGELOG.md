@@ -5,6 +5,10 @@ section is missing here.
 
 ## Unreleased
 
+### Fixed
+
+- Release downloads survive a failing GitHub route: a release URL is retried up to 3 times (about 1 s, then 4 s apart) on a 5xx, 429 or network error, then fetched from the other route (the web URL or the API asset endpoint). With `GH_TOKEN` or `GITHUB_TOKEN` set the API route goes first and the token is sent to the API host only, never to the host an asset redirects to; without one the web URL goes first. `GRH_API_BASE` points the API route at another host. Each URL is downloaded once per process, and the failure message names the URL once with the last status and the routes tried.
+
 ## v0.1.17
 
 ### Changed
