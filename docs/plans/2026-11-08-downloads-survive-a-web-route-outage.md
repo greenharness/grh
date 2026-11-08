@@ -88,5 +88,11 @@ and fall back between the two routes.
   with only `git` on PATH:
   - first patch, no token → exit 0, 117 s, 8 ✓ 0 ✗; with a token →
     exit 0, 30 s, 8 ✓ 0 ✗, the token in 0 output lines;
-  - final patch, no token → exit 0, 103 s, 8 ✓ 0 ✗, 8 stderr retry lines
-    and 4 route-switch lines.
+  - review-fix patch, no token → exit 0, 103 s, 8 ✓ 0 ✗, 8 stderr retry
+    lines and 4 route-switch lines.
+- `GH_TOKEN=<invalid>` `grh install decisions --yes` against the real API →
+  401, anonymous API retry → observed: exit 0 in 4 s, 2 ✓ 0 ✗, the token
+  in 0 output lines.
+- Delta fixes (`Location` forms, attempt wording, accept deadline) →
+  `make check` exit 0 (31.6 s); `a_location_resolves_or_is_refused`
+  covers `https://`, `//host`, `/path` and three refused relative forms.
