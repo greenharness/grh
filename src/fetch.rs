@@ -233,9 +233,13 @@ fn resolve_location(from: &str, location: &str) -> Result<String, Hit> {
     let Some(scheme_end) = from.find("://") else {
         return Err(Hit::Fatal(format!("cannot resolve Location {location}")));
     };
-    let is_absolute = location
-        .split_once("://")
-        .is_some_and(|(scheme, _)| !scheme.is_empty() && !scheme.contains('/'));
+    // An RFC 3986 scheme: a letter, then letters, digits, `+`, `-` or `.`.
+    let is_absolute = location.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+            && scheme
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    });
     if is_absolute {
         return Ok(location.to_string());
     }
@@ -936,7 +940,7 @@ mod tests {
             resolve_location("http://h:1", "/p").ok().as_deref(),
             Some("http://h:1/p")
         );
-        for relative in ["../x", "final", "p/q?u=http://z"] {
+        for relative in ["../x", "final", "p/q?u=http://z", "final?u=http://z"] {
             let refused = resolve_location(from, relative);
             assert!(matches!(refused, Err(Hit::Fatal(_))), "{relative}");
         }
