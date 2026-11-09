@@ -20,7 +20,10 @@ skills_sha256 = "9bb0f7796a8f462bc5b20cb716791a7c0f4b1f972747885224c7e24d48e6384
 foreign_markers = ["relais:begin"]
 order = ["decisions", "greengate", "greenpiste", "router", "conform", "attest", "workflow", "design"]
 
-[profiles]
+# Names that installed several parts before 0.3.0, with their former members.
+# grh refuses them with a hint (Catalog::checked: no part name or alias, and
+# every member a published part).
+[retired_names]
 solo = ["greengate", "greenpiste"]
 team = ["greengate", "greenpiste", "decisions", "conform"]
 full = ["greengate", "greenpiste", "decisions", "conform", "router"]

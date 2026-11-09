@@ -83,11 +83,11 @@ step "install.sh, from this build"
 GRH_BASE_URL="file://$dist" GRH_VERSION="v$version" sh "$here/install/install.sh"
 grh --version | grep -q "$version"
 
-step "grh install full workflow --repo, in a fixture repository"
+step "grh install --all --repo, in a fixture repository"
 repo="$scratch/repo"
 git init -q "$repo"
 (cd "$repo" && git commit -q --allow-empty -m "chore: seed")
-(cd "$repo" && grh install full workflow --repo --yes)
+(cd "$repo" && grh install --all --repo --yes)
 
 grep -q '^mcp add' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp add was recorded"; exit 1; }
 # Keep the parts' binaries for the adopted cases below.

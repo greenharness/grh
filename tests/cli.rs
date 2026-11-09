@@ -103,7 +103,7 @@ impl Fx {
         catalog.push_str(&format!(
             "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\nforeign_markers = [\"relais:begin\"]\n\
              order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\"]\n\
-             [profiles]\nsolo = [\"gate\", \"guardrails\"]\n",
+             [retired_names]\nsolo = [\"gate\", \"guardrails\"]\n",
             sha256_hex(&skills)
         ));
         let level = |key: &str, install: &str, uninstall: &str, requires: &str, status: &str| {
@@ -285,7 +285,7 @@ fn err(o: &Output) -> String {
 #[test]
 fn install_solo_places_binaries_and_runs_the_tools_installs() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "solo", "--yes"]);
+    let o = fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(fx.files("bin"), ["amont", "amont-agent"]);
     assert!(fx.log().contains("amont-agent install --write"));
@@ -298,10 +298,13 @@ fn install_solo_places_binaries_and_runs_the_tools_installs() {
 #[test]
 fn a_second_install_changes_nothing_and_keeps_ownership() {
     let fx = Fx::new();
-    assert_eq!(code(&fx.grh("work", &[], &["install", "solo", "--yes"])), 0);
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"])),
+        0
+    );
     let entries = fx.entries();
     let installs = fx.log().matches("install --write").count();
-    let o = fx.grh("work", &[], &["install", "solo", "--yes"]);
+    let o = fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert_eq!(fx.entries(), entries);
     assert_eq!(fx.log().matches("install --write").count(), installs);
@@ -313,7 +316,10 @@ fn a_second_install_changes_nothing_and_keeps_ownership() {
 fn a_present_integration_is_adopted_and_never_undone() {
     let fx = Fx::new();
     fs::write(fx.p("fstate/amont-agent.machine"), "").unwrap();
-    assert_eq!(code(&fx.grh("work", &[], &["install", "solo", "--yes"])), 0);
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"])),
+        0
+    );
     assert!(fx.receipt().contains("tool-install-adopted"));
     assert!(!fx.log().contains("amont-agent install --write"));
     let o = fx.grh("work", &[], &["uninstall", "--yes"]);
@@ -362,7 +368,10 @@ fn a_missing_claude_is_a_reported_gap() {
 #[test]
 fn bare_uninstall_removes_everything_it_placed() {
     let fx = Fx::new();
-    assert_eq!(code(&fx.grh("work", &[], &["install", "solo", "--yes"])), 0);
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"])),
+        0
+    );
     let o = fx.grh("work", &[], &["uninstall", "--yes"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(fx.files("bin").is_empty());
@@ -375,7 +384,10 @@ fn bare_uninstall_removes_everything_it_placed() {
 #[test]
 fn a_binary_whose_integration_survives_the_undo_is_kept() {
     let fx = Fx::new();
-    assert_eq!(code(&fx.grh("work", &[], &["install", "solo", "--yes"])), 0);
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"])),
+        0
+    );
     let o = fx.grh(
         "work",
         &[("FAKE_STICKY", "amont-agent")],
@@ -394,7 +406,7 @@ fn a_binary_whose_integration_survives_the_undo_is_kept() {
 #[test]
 fn without_yes_on_a_non_tty_nothing_changes() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "solo"]);
+    let o = fx.grh("work", &[], &["install", "gate", "guardrails"]);
     assert_eq!(code(&o), 2, "{}", err(&o));
     assert!(fx.files("bin").is_empty());
     assert!(!fx.p("state/grh").exists());
@@ -406,7 +418,177 @@ fn a_bare_install_lists_parts_and_exits_2() {
     let fx = Fx::new();
     let o = fx.grh("work", &[], &["install"]);
     assert_eq!(code(&o), 2);
-    assert!(err(&o).contains("gate") && err(&o).contains("solo"));
+    assert!(err(&o).contains("gate") && err(&o).contains("--all"));
+    assert!(
+        !err(&o).contains("solo") && !err(&o).contains("profile"),
+        "{}",
+        err(&o)
+    );
+    assert!(o.stdout.is_empty());
+}
+
+fn out(o: &Output) -> String {
+    String::from_utf8_lossy(&o.stdout).into_owned()
+}
+
+#[test]
+fn a_retired_name_exits_2_with_the_hint_and_changes_nothing() {
+    let fx = Fx::new();
+    assert_eq!(code(&fx.grh("work", &[], &["install", "gate", "--yes"])), 0);
+    let receipt = fx.receipt();
+    let log = fx.log();
+    let files = fx.files("bin");
+    let hint = |verb: &str, what: &str, members: &str| {
+        format!(
+            "profiles were removed in 0.3.0; to {what} what solo installed: grh {verb} {members}"
+        )
+    };
+    for (args, expected) in [
+        (
+            &["install", "solo", "--yes"][..],
+            hint("install", "install", "gate guardrails") + " (or grh install --all)",
+        ),
+        (
+            &["install", "solo", "gate", "--yes"],
+            hint("install", "install", "gate guardrails") + " (or grh install --all)",
+        ),
+        (
+            &["uninstall", "solo", "--yes"],
+            hint("uninstall", "remove", "gate guardrails"),
+        ),
+    ] {
+        let o = fx.grh("work", &[], args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
+        assert!(err(&o).contains(&expected), "{args:?}: {}", err(&o));
+        assert!(out(&o).is_empty(), "{args:?}: {}", out(&o));
+        assert_eq!(fx.receipt(), receipt);
+        assert_eq!(fx.log(), log);
+        assert_eq!(fx.files("bin"), files);
+    }
+}
+
+#[test]
+fn all_with_yes_installs_every_published_part() {
+    let fx = Fx::new();
+    let o = fx.grh("work", &[], &["install", "--all", "--yes"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(fx.files("bin"), ["amont", "amont-agent", "aval"]);
+    let receipt = fx.receipt();
+    for part in ["decisions", "gate", "guardrails"] {
+        assert!(
+            receipt.contains(&format!("\"part\": \"{part}\"")),
+            "{part}: {receipt}"
+        );
+    }
+    assert!(!receipt.contains("design"), "{receipt}");
+    let entries = fx.entries();
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "--all", "--yes"])),
+        0
+    );
+    assert_eq!(fx.entries(), entries);
+}
+
+#[test]
+fn all_without_yes_off_a_terminal_exits_2_naming_yes() {
+    let fx = Fx::new();
+    let o = fx.grh("work", &[], &["install", "--all"]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(err(&o).contains("grh install --all --yes"), "{}", err(&o));
+    assert!(fx.files("bin").is_empty());
+    assert!(!fx.p("state/grh").exists());
+}
+
+#[test]
+fn all_with_names_or_an_extension_exits_2() {
+    let fx = Fx::new();
+    for args in [
+        &["install", "--all", "gate", "--yes"][..],
+        &["install", "--all", "--extension", "somewhere", "--yes"],
+    ] {
+        let o = fx.grh("work", &[], args);
+        assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
+        assert!(fx.files("bin").is_empty());
+        assert!(!fx.p("state/grh").exists());
+    }
+}
+
+#[test]
+fn all_skips_a_part_whose_need_failed_and_exits_1_naming_both() {
+    let fx = Fx::new();
+    let t = target().unwrap();
+    fs::remove_file(fx.p(&format!(
+        "rel/fredericrous/amont/releases/download/v1.0.0/amont-1.0.0-{t}.tar.gz"
+    )))
+    .unwrap();
+    git_init(&fx);
+    let o = fx.grh("work", &[], &["install", "--all", "--repo", "--yes"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(
+        err(&o).contains("failed: gate; skipped: attest"),
+        "{}",
+        err(&o)
+    );
+    let receipt = fx.receipt();
+    assert!(!receipt.contains("\"part\": \"attest\""), "{receipt}");
+    assert!(receipt.contains("\"part\": \"guardrails\""), "{receipt}");
+    assert!(!receipt.contains("\"part\": \"gate\""), "{receipt}");
+    assert!(!fx.p("work/.github/workflows/attest.yml").exists());
+}
+
+#[test]
+fn a_named_install_whose_binary_cannot_be_fetched_places_no_skills() {
+    let fx = Fx::new();
+    let t = target().unwrap();
+    fs::remove_file(fx.p(&format!(
+        "rel/fredericrous/amont/releases/download/v1.0.0/amont-1.0.0-{t}.tar.gz"
+    )))
+    .unwrap();
+    let o = fx.grh("work", &[], &["install", "gate", "--yes"]);
+    assert_ne!(code(&o), 0, "{}", err(&o));
+    // The skill would point at a tool that is not there, and the receipt must
+    // not record a part that did not install.
+    assert!(!fx.p("claude/skills/s1/SKILL.md").exists());
+    assert!(
+        !fx.receipt().contains("\"part\": \"gate\""),
+        "{}",
+        fx.receipt()
+    );
+}
+
+#[test]
+fn the_consent_hint_for_all_keeps_the_flags_given() {
+    let fx = Fx::new();
+    git_init(&fx);
+    let o = fx.grh("work", &[], &["install", "--all", "--repo"]);
+    assert_eq!(code(&o), 2, "{}", err(&o));
+    assert!(
+        err(&o).contains("grh install --all --repo --yes"),
+        "{}",
+        err(&o)
+    );
+    assert!(o.stdout.is_empty());
+}
+
+#[test]
+fn all_skips_a_part_whose_need_installed_its_binary_but_failed_its_integration() {
+    let fx = Fx::new();
+    git_init(&fx);
+    let catalog = fs::read_to_string(fx.p("catalog.toml"))
+        .unwrap()
+        .replace("[\"{bin}\", \"init\"]", "[\"/usr/bin/false\"]");
+    put(&fx.p("catalog.toml"), catalog.as_bytes());
+    let o = fx.grh("work", &[], &["install", "--all", "--repo", "--yes"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(
+        err(&o).contains("failed: gate; skipped: attest"),
+        "{}",
+        err(&o)
+    );
+    let receipt = fx.receipt();
+    assert!(!receipt.contains("\"part\": \"attest\""), "{receipt}");
+    assert!(receipt.contains("\"part\": \"guardrails\""), "{receipt}");
+    assert!(!fx.p("work/.github/workflows/attest.yml").exists());
 }
 
 #[test]
@@ -433,7 +615,7 @@ fn help_wins_over_an_unknown_flag_and_the_flag_alone_exits_2() {
 #[test]
 fn dry_run_changes_nothing() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "solo", "--dry-run"]);
+    let o = fx.grh("work", &[], &["install", "gate", "guardrails", "--dry-run"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     assert!(fx.files("bin").is_empty());
     assert!(!fx.p("state/grh").exists());
@@ -442,7 +624,11 @@ fn dry_run_changes_nothing() {
 #[test]
 fn installing_design_exits_3_after_installing_the_rest() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "solo", "design", "--yes"]);
+    let o = fx.grh(
+        "work",
+        &[],
+        &["install", "gate", "guardrails", "design", "--yes"],
+    );
     assert_eq!(code(&o), 3, "{}", err(&o));
     assert_eq!(fx.files("bin"), ["amont", "amont-agent"]);
 }
@@ -470,7 +656,10 @@ fn uninstall_warns_about_a_dependent_and_keep_deps_refuses() {
 #[test]
 fn status_json_is_one_document_on_stdout() {
     let fx = Fx::new();
-    assert_eq!(code(&fx.grh("work", &[], &["install", "solo", "--yes"])), 0);
+    assert_eq!(
+        code(&fx.grh("work", &[], &["install", "gate", "guardrails", "--yes"])),
+        0
+    );
     let o = fx.grh("work", &[], &["status", "--json"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
@@ -1254,7 +1443,7 @@ fn uninstalling_by_an_alias_names_the_uninstall_command() {
 #[test]
 fn the_install_plan_shows_the_binary_name_never_the_placeholder() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "solo", "--dry-run"]);
+    let o = fx.grh("work", &[], &["install", "gate", "guardrails", "--dry-run"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     let plan = String::from_utf8_lossy(&o.stdout).into_owned() + &err(&o);
     assert!(!plan.contains("{bin}"), "{plan}");

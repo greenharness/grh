@@ -9,7 +9,7 @@ use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
 use crate::manifest::{stays_inside, RepoFile, ToolLevel};
 use crate::ops::{
-    absolute, command_line, confirm, git_root, listing, on_path, recorded_bin, run_tool,
+    absolute, command_line, confirm_rerun, git_root, listing, on_path, recorded_bin, run_tool,
     same_scope, subst, text, worst_of, Consent, Summary, Ui,
 };
 use crate::owner::{self, Answer};
@@ -21,6 +21,7 @@ use crate::skills::{self, Bundle};
 #[derive(Debug, Default)]
 pub struct Opts {
     pub names: Vec<String>,
+    pub all: bool,
     pub repo: bool,
     pub replace: bool,
     pub dry_run: bool,
@@ -179,21 +180,45 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
 }
 
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
+    if let Some(notice) = cat.retired_notice(&opts.names, Verb::Install) {
+        return Err(Exit::Usage(notice));
+    }
+    if opts.all && !opts.names.is_empty() {
+        return Err(Exit::Usage(
+            "--all installs every published part; name no parts with it".into(),
+        ));
+    }
     let ui = Ui::new(opts.quiet);
-    if opts.names.is_empty() {
+    if opts.names.is_empty() && !opts.all {
         return Err(Exit::Usage(listing(cat)));
     }
     cat.warn_aliases(&ui, &opts.names, Verb::Install);
-    let parts = cat.resolve(&opts.names).map_err(|Unknown::Name(n)| {
-        Exit::Usage(format!("unknown part or profile: {n}\n{}", listing(cat)))
-    })?;
+    let wanted = if opts.all {
+        cat.published_names()
+    } else {
+        opts.names.clone()
+    };
+    let parts = cat
+        .resolve(&wanted)
+        .map_err(|Unknown::Name(n)| Exit::Usage(format!("unknown part: {n}\n{}", listing(cat))))?;
     let repo = if opts.repo { Some(git_root()?) } else { None };
     plan(&ui, &parts, repo.as_deref());
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
     }
-    if !confirm(Consent::from_yes_flag(opts.yes), "install")? {
+    // What to type again: with `--all` the whole command, built from the flags
+    // actually given, so a copied hint does not drop `--repo` or `--replace`.
+    let rerun = if opts.all {
+        format!(
+            "grh install --all{}{} --yes",
+            if opts.repo { " --repo" } else { "" },
+            if opts.replace { " --replace" } else { "" }
+        )
+    } else {
+        "--yes".to_string()
+    };
+    if !confirm_rerun(Consent::from_yes_flag(opts.yes), "install", &rerun)? {
         ui.say("nothing changed");
         return Ok(());
     }
@@ -208,11 +233,44 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         None,
     );
     let mut failures: Vec<Exit> = Vec::new();
+    let mut failed: Vec<&str> = Vec::new();
+    let mut skipped: Vec<&str> = Vec::new();
     for part in &parts {
         run.ui.say(part.name());
-        failures.extend(run.part(part));
+        if opts.all {
+            let missing = part
+                .needs()
+                .iter()
+                .filter_map(|n| cat.part(n))
+                .find(|need| failed.contains(&need.name()) || skipped.contains(&need.name()));
+            if let Some(need) = missing {
+                run.ui.fail(&format!(
+                    "{}: skipped, because {} did not install",
+                    part.name(),
+                    need.name()
+                ));
+                skipped.push(part.name());
+                continue;
+            }
+        }
+        let part_failures = run.part(part);
+        if !part_failures.is_empty() {
+            failed.push(part.name());
+        }
+        failures.extend(part_failures);
     }
     run.sum.print(&run.ui);
+    if opts.all && !failed.is_empty() {
+        return Err(Exit::Failed(format!(
+            "failed: {}; skipped: {}",
+            failed.join(", "),
+            if skipped.is_empty() {
+                "none".to_string()
+            } else {
+                skipped.join(", ")
+            }
+        )));
+    }
     match worst_of(failures) {
         None => Ok(()),
         Some(e) => Err(e),
@@ -251,14 +309,22 @@ impl Run<'_> {
                 }
             }
         }
-        if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
-            if let Err(e) = self.place_skills(part) {
-                note(&self.ui, e);
+        // A part whose tool is not on the machine places neither its skills nor
+        // its repository files: they would point at a tool that is not there,
+        // and the receipt would record a part that did not install. When the
+        // binary is there but an integration step failed, what was placed stays
+        // on record, so `grh uninstall` can undo it.
+        let binary_missing = part.bin().is_some() && bin.is_none();
+        if !binary_missing {
+            if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
+                if let Err(e) = self.place_skills(part) {
+                    note(&self.ui, e);
+                }
             }
-        }
-        for file in &part.repo_file {
-            if let Err(e) = self.repo_file(part, file) {
-                note(&self.ui, e);
+            for file in &part.repo_file {
+                if let Err(e) = self.repo_file(part, file) {
+                    note(&self.ui, e);
+                }
             }
         }
         if let Some(h) = part.hint() {

@@ -13,9 +13,7 @@ use grh::{audit, catalog, dispatch, extension, install, status, uninstall};
     name = "grh",
     version,
     about = "Install, audit and remove the Green Harness parts",
-    after_help = "Parts: decisions gate guardrails router conform attest workflow design\n\
-                  Profiles: solo (gate guardrails), team (+ decisions conform), full (+ router)\n\
-                  Any other first word runs that part: grh decisions resolve <key>"
+    after_help = "Any other first word runs a part: grh <part> <command>"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -24,10 +22,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Install parts or profiles, with what they need.
+    /// Install parts, with what they need.
     Install {
-        /// Parts and profiles (solo, team, full).
+        /// The parts to install (run `grh install` alone to list them).
         names: Vec<String>,
+        /// Install every published part, with what each needs.
+        #[arg(long)]
+        all: bool,
         /// Also arm the current repository (git hooks, the decisions hook, attest's workflow).
         #[arg(long)]
         repo: bool,
@@ -63,7 +64,7 @@ enum Command {
         #[arg(long, short = 'q')]
         quiet: bool,
     },
-    /// Read a repository and recommend parts and a profile. Changes nothing.
+    /// Read a repository and recommend parts. Changes nothing.
     Audit {
         dir: Option<std::path::PathBuf>,
         #[arg(long)]
@@ -137,6 +138,7 @@ fn main() -> ExitCode {
         },
         Command::Install {
             names,
+            all,
             repo,
             replace,
             dry_run,
@@ -144,7 +146,12 @@ fn main() -> ExitCode {
             extension,
             quiet,
         } => {
-            if let Some(dir) = extension {
+            if all && extension.is_some() {
+                Err(Exit::Usage(
+                    "--all installs the published parts; it cannot be combined with --extension"
+                        .into(),
+                ))
+            } else if let Some(dir) = extension {
                 if !names.is_empty() {
                     Err(Exit::Usage(
                         "--extension installs one extension; name no parts with it".into(),
@@ -170,6 +177,7 @@ fn main() -> ExitCode {
                         &cat,
                         &install::Opts {
                             names,
+                            all,
                             repo,
                             replace,
                             dry_run,

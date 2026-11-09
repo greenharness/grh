@@ -43,6 +43,9 @@ fn canonical(cat: &Catalog, name: &str) -> String {
 }
 
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
+    if let Some(notice) = cat.retired_notice(&opts.names, crate::catalog::Verb::Uninstall) {
+        return Err(Exit::Usage(notice));
+    }
     let ui = Ui::new(opts.quiet);
     cat.warn_aliases(&ui, &opts.names, crate::catalog::Verb::Uninstall);
     let only_repo = if opts.repo { Some(git_root()?) } else { None };
@@ -57,12 +60,10 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         targets.extend(held.iter().cloned());
     } else {
         for n in &opts.names {
-            if let Some(members) = cat.profiles.get(n) {
-                targets.extend(members.iter().map(|m| canonical(cat, m)));
-            } else if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
+            if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
                 targets.insert(canonical(cat, n));
             } else {
-                return Err(Exit::Usage(format!("unknown part or profile: {n}")));
+                return Err(Exit::Usage(format!("unknown part: {n}")));
             }
         }
     }

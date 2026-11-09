@@ -18,7 +18,9 @@ pub struct Catalog {
     pub skills_repo: String,
     pub skills_version: String,
     pub skills_sha256: String,
-    pub profiles: BTreeMap<String, Vec<String>>,
+    /// Names that used to install several parts, with their former members.
+    /// They are refused with a hint, never expanded.
+    pub retired_names: BTreeMap<String, Vec<String>>,
     pub audit: AuditPaths,
     /// A line of a placed file containing one of these marks it as another
     /// tool's: grh leaves such a file alone.
@@ -35,7 +37,8 @@ struct RawCatalog {
     skills_repo: String,
     skills_version: String,
     skills_sha256: String,
-    profiles: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    retired_names: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     audit: AuditPaths,
     foreign_markers: Vec<String>,
@@ -52,7 +55,7 @@ impl TryFrom<RawCatalog> for Catalog {
             skills_repo: raw.skills_repo,
             skills_version: raw.skills_version,
             skills_sha256: raw.skills_sha256,
-            profiles: raw.profiles,
+            retired_names: raw.retired_names,
             audit: raw.audit,
             foreign_markers: raw.foreign_markers,
             order: raw.order,
@@ -126,7 +129,8 @@ impl Catalog {
     }
 
     /// Every part is a valid manifest; names and aliases are unique; every
-    /// `needs`, `enhances` and profile member names a part; no cycle runs
+    /// `needs` and `enhances` names a part, and every retired name is no part
+    /// name or alias and lists published parts only; no cycle runs
     /// through `needs` and `enhances` together; every part is in `order` and
     /// every edge points to an earlier entry. So `resolve` can walk the
     /// graph without a lookup that could fail.
@@ -164,10 +168,18 @@ impl Catalog {
                 }
             }
         }
-        for (profile, members) in &self.profiles {
-            if let Some(member) = members.iter().find(|m| self.part(m).is_none()) {
+        for (retired, members) in &self.retired_names {
+            if self.part(retired).is_some() {
                 return Err(invalid(format!(
-                    "profile {profile} names unknown part {member}"
+                    "the retired name {retired} is also a part name or alias"
+                )));
+            }
+            if let Some(member) = members
+                .iter()
+                .find(|m| !self.part(m).is_some_and(Part::is_published))
+            {
+                return Err(invalid(format!(
+                    "the retired name {retired} lists {member}, which is not a published part"
                 )));
             }
         }
@@ -319,20 +331,43 @@ impl Catalog {
         }
     }
 
-    /// Parts and profiles named on the command line, expanded, with every
-    /// dependency added, in install order (a part after what it needs).
-    /// `enhances` are never added.
+    /// The published parts, by name, in catalog order.
+    pub fn published_names(&self) -> Vec<String> {
+        self.parts
+            .iter()
+            .filter(|p| p.is_published())
+            .map(|p| p.name().to_string())
+            .collect()
+    }
+
+    /// The members `name` used to stand for, when it is a retired name.
+    pub fn retired_members(&self, name: &str) -> Option<&[String]> {
+        self.retired_names.get(name).map(Vec::as_slice)
+    }
+
+    /// The usage error for the first retired name among `names`, naming the
+    /// command that does what the old name did.
+    pub fn retired_notice(&self, names: &[String], verb: Verb) -> Option<String> {
+        let (name, members) = names
+            .iter()
+            .find_map(|n| self.retired_members(n).map(|m| (n, m)))?;
+        let members = members.join(" ");
+        Some(match verb {
+            Verb::Uninstall => format!(
+                "profiles were removed in 0.3.0; to remove what {name} installed: grh uninstall {members}"
+            ),
+            Verb::Install | Verb::Dispatch => format!(
+                "profiles were removed in 0.3.0; to install what {name} installed: grh install {members} (or grh install --all)"
+            ),
+        })
+    }
+
+    /// Parts named on the command line, with every dependency added, in
+    /// install order (a part after what it needs). `enhances` are never added.
     pub fn resolve(&self, names: &[String]) -> Result<Vec<&Part>, Unknown> {
         let mut wanted = BTreeSet::new();
         for name in names {
-            if let Some(profile) = self.profiles.get(name) {
-                wanted.extend(
-                    profile
-                        .iter()
-                        .filter_map(|m| self.part(m))
-                        .map(|p| p.name()),
-                );
-            } else if let Some(part) = self.part(name) {
+            if let Some(part) = self.part(name) {
                 wanted.insert(part.name());
             } else {
                 return Err(Unknown::Name(name.clone()));
@@ -402,7 +437,7 @@ mod tests {
             )
         };
         let mut out = format!(
-            "skills_repo = \"o/s\"\nskills_version = \"1\"\nskills_sha256 = \"x\"\nforeign_markers = [\"m:begin\"]\norder = {}\n[profiles]\n",
+            "skills_repo = \"o/s\"\nskills_version = \"1\"\nskills_sha256 = \"x\"\nforeign_markers = [\"m:begin\"]\norder = {}\n[retired_names]\n",
             list(order)
         );
         for (name, needs, enhances, aliases) in parts {
@@ -456,17 +491,21 @@ mod tests {
     }
 
     #[test]
-    fn every_need_names_a_part_and_no_profile_collides_with_one() {
+    fn every_need_names_a_part_and_no_retired_name_collides_with_one() {
         let c = Catalog::load().unwrap();
         for p in &c.parts {
             for n in p.needs() {
                 assert!(c.part(n).is_some(), "{} needs unknown {n}", p.name());
             }
         }
-        for (name, members) in &c.profiles {
-            assert!(c.part(name).is_none(), "profile {name} shadows a part");
+        assert!(!c.retired_names.is_empty());
+        for (name, members) in &c.retired_names {
+            assert!(c.part(name).is_none(), "retired name {name} shadows a part");
             for m in members {
-                assert!(c.part(m).is_some(), "profile {name} names unknown {m}");
+                assert!(
+                    c.part(m).is_some_and(Part::is_published),
+                    "retired name {name} lists {m}, which is not a published part"
+                );
             }
         }
     }
@@ -491,15 +530,47 @@ mod tests {
     }
 
     #[test]
-    fn profiles_expand_to_what_the_site_lists() {
+    fn a_retired_name_is_refused_when_it_is_a_part_or_lists_an_unpublished_part() {
+        let base = fixture(
+            &["a", "b"],
+            &[("a", &[], &[], &["x"]), ("b", &[], &[], &[])],
+        );
+        let with =
+            |table: &str| base.replace("[retired_names]\n", &format!("[retired_names]\n{table}"));
+        assert!(Catalog::parse(&with("old = [\"a\", \"b\"]\n")).is_ok());
+        refused(&with("a = [\"b\"]\n"), &["retired name a"]);
+        refused(&with("x = [\"b\"]\n"), &["retired name x"]);
+        refused(&with("old = [\"ghost\"]\n"), &["old", "ghost"]);
+        let unpublished =
+            with("old = [\"b\"]\n").replace("name = \"b\"\n", "name = \"b\"\npublished = false\n");
+        refused(&unpublished, &["old", "b", "published"]);
+    }
+
+    #[test]
+    fn the_retired_notice_names_the_former_members_and_the_verb() {
         let c = Catalog::load().unwrap();
-        let solo = names(&c.resolve(&args(&["solo"])).unwrap());
-        assert_eq!(solo, ["greengate", "greenpiste"]);
-        let team = names(&c.resolve(&args(&["team"])).unwrap());
-        assert_eq!(team, ["decisions", "conform", "greengate", "greenpiste"]);
-        let full = names(&c.resolve(&args(&["full"])).unwrap());
-        assert_eq!(full.len(), 5);
-        assert!(full.contains(&"router".to_string()));
+        let notice = c.retired_notice(&args(&["solo"]), Verb::Install).unwrap();
+        assert_eq!(
+            notice,
+            "profiles were removed in 0.3.0; to install what solo installed: grh install greengate greenpiste (or grh install --all)"
+        );
+        let notice = c
+            .retired_notice(&args(&["greengate", "solo"]), Verb::Uninstall)
+            .unwrap();
+        assert!(
+            notice.ends_with("to remove what solo installed: grh uninstall greengate greenpiste")
+        );
+        assert!(c
+            .retired_notice(&args(&["greengate"]), Verb::Install)
+            .is_none());
+    }
+
+    #[test]
+    fn published_names_leave_out_an_unpublished_part() {
+        let source = fixture(&["a", "b"], &[("a", &[], &[], &[]), ("b", &[], &[], &[])])
+            .replace("name = \"b\"\n", "name = \"b\"\npublished = false\n");
+        let c = Catalog::parse(&source).unwrap();
+        assert_eq!(c.published_names(), ["a"]);
     }
 
     #[test]
