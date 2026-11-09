@@ -59,3 +59,37 @@ The catalog's `[[part]]` entries are manifests of this same type. v2 adds the fo
 A manifest the catalog does not pin installs through the same path as a catalog part, so it may carry a `[tool]`. Before asking for consent, grh prints on stderr, even under `--quiet`, the binary a `[tool.release]` would download (its repository and version, which the same manifest supplies with its sha256), every command it would run (doctor commands included), (install, uninstall, status, keep-binary) one per line with shell-quoted arguments, every `[[repo_file]]` path (not its content) and every `requires` entry. Off a terminal without `--yes` it then exits 2 and changes nothing. `--repo` allows `[[repo_file]]` and `[tool.repo_level]`; a repo file is written only inside the repository (no `..`, no absolute path, no link that leaves it).
 
 The level's `status` and the `keep_binary` spec are recorded in the receipt at install time, so uninstall undoes the tool and confirms it absent after the extension directory is gone.
+
+## Audit rules (harness 0.3)
+
+A manifest that uses `[[recommend]]` or `[[conflict]]` declares
+`harness = ">=0.3"`; a requirement that 0.2 satisfies is refused. In the
+catalog they are `[[part.recommend]]` and `[[part.conflict]]`.
+
+```toml
+[[recommend]]
+when = ["adr_folder", "!ci_present"]   # all must hold; "!" negates; [] always holds
+verdict = "recommend"                  # "already here" | "recommend" | "not useful"
+reason = "decisions live in {adr_folder}"
+
+[[conflict]]
+paths = [".husky"]                     # or git_config = "key", or foreign_hooks = true
+label = "husky (.husky/)"              # optional: added to the audit's `hooks`
+warning = "{manager} already manages git hooks here"   # optional
+```
+
+The first rule of a part whose `when` holds gives its audit row; no rule that
+holds means `not useful`. Signals: `machine_present`, `repo_present` (the
+part's declared status at that level; the part must declare one),
+`adr_folder`, `claude_set_up`, `ci_present` (path lists in the catalog's
+`[audit]` table), `language_supported`, `repo_file_here` (the part's first
+`[[repo_file]]` exists in a CI directory) and `dep:<prefix>` (`package.json`
+declares a dependency starting with the prefix). Any other signal is refused.
+
+Templates (`reason`, `warning`, `label`) may use only `{adr_folder}`, `{ci}`,
+`{claude_files}`, `{part}`, `{hooks_path}` and `{manager}`; anything else is
+refused when the manifest loads.
+
+In `grh audit --json`, `signals` is one flat map: `machine_present`,
+`repo_present` and `repo_file_here` are true when they hold for any part.
+Each part's own row reads the signal for that part.

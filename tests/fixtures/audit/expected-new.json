@@ -1,0 +1,65 @@
+{
+  "adr_no_language": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste decisions"
+  },
+  "aval_mcp_registered": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste conform"
+  },
+  "ci_attest": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste"
+  },
+  "ci_present": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste attest"
+  },
+  "claude_installed": {
+    "hooks": [],
+    "install": "grh install greengate workflow"
+  },
+  "claude_setup": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste router workflow"
+  },
+  "duro": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste design"
+  },
+  "empty": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste"
+  },
+  "gate_installed": {
+    "hooks": [
+      "greengate"
+    ],
+    "install": "grh install greenpiste"
+  },
+  "hooks_path": {
+    "hooks": [
+      "core.hooksPath=.githooks",
+      "hook pre-push"
+    ],
+    "install": "grh install greengate greenpiste"
+  },
+  "managers_all": {
+    "hooks": [
+      "lefthook",
+      "pre-commit (.pre-commit-config.yaml)"
+    ],
+    "install": "grh install greengate greenpiste"
+  },
+  "rust_husky": {
+    "hooks": [
+      "husky (.husky/)",
+      "hook pre-commit"
+    ],
+    "install": "grh install greengate greenpiste"
+  },
+  "ts_adrs": {
+    "hooks": [],
+    "install": "grh install greengate greenpiste decisions conform"
+  }
+}

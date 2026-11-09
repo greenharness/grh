@@ -32,6 +32,7 @@ pub struct Opts {
 #[derive(Debug)]
 pub struct Run<'a> {
     cat: Option<&'a Catalog>,
+    foreign_markers: &'a [String],
     pub ui: Ui,
     pub store: Store,
     pub sum: Summary,
@@ -108,6 +109,7 @@ impl<'a> Run<'a> {
 
     pub fn new(
         cat: Option<&'a Catalog>,
+        foreign_markers: &'a [String],
         ui: Ui,
         store: Store,
         replace: bool,
@@ -116,6 +118,7 @@ impl<'a> Run<'a> {
     ) -> Run<'a> {
         Run {
             cat,
+            foreign_markers,
             ui,
             store,
             sum: Summary::default(),
@@ -195,7 +198,15 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
     let store = Store::open_migrating(|name| cat.name_of_alias(name))?;
-    let mut run = Run::new(Some(cat), ui, store, opts.replace, repo, None);
+    let mut run = Run::new(
+        Some(cat),
+        &cat.foreign_markers,
+        ui,
+        store,
+        opts.replace,
+        repo,
+        None,
+    );
     let mut failures: Vec<Exit> = Vec::new();
     for part in &parts {
         run.ui.say(part.name());
@@ -538,7 +549,14 @@ impl Run<'_> {
             None => return Ok(()),
         };
         let claude = skills::claude_dir()?;
-        let placement = skills::place(bundle, part, &claude, &mut self.store, self.replace)?;
+        let placement = skills::place(
+            bundle,
+            part,
+            &claude,
+            &mut self.store,
+            self.replace,
+            self.foreign_markers,
+        )?;
         let name = part.name();
         self.ui.ok(&format!(
             "{name}: {} skill and agent files in {}",

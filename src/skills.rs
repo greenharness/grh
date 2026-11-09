@@ -16,8 +16,6 @@ use crate::exit::Exit;
 use crate::fetch::{download_verified, read_tarball, release_base, sha256_hex};
 use crate::receipt::{write_atomic, Entry, Kind, Store};
 
-const RELAIS_MARK: &str = "relais:begin";
-
 /// `$CLAUDE_CONFIG_DIR`, else `~/.claude`.
 pub fn claude_dir() -> Result<PathBuf, Exit> {
     if let Some(d) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|d| !d.is_empty()) {
@@ -152,10 +150,16 @@ pub struct Removal {
     pub kept: Vec<Skipped>,
 }
 
-fn is_relais(bytes: &[u8]) -> bool {
-    String::from_utf8_lossy(bytes)
-        .lines()
-        .any(|l| l.contains(RELAIS_MARK))
+/// The first mark in `markers` that a line of `bytes` contains.
+fn foreign_mark<'a>(bytes: &[u8], markers: &'a [String]) -> Option<&'a str> {
+    let text = String::from_utf8_lossy(bytes);
+    let mut lines = text.lines();
+    lines.find_map(|line| {
+        markers
+            .iter()
+            .find(|m| line.contains(m.as_str()))
+            .map(String::as_str)
+    })
 }
 
 fn read_existing(path: &Path) -> Result<Option<Vec<u8>>, Exit> {
@@ -203,6 +207,7 @@ pub fn place(
     claude: &Path,
     store: &mut Store,
     replace: bool,
+    foreign_markers: &[String],
 ) -> Result<Placement, Exit> {
     let files = bundle.files_for(part)?;
     let ts = std::time::SystemTime::now()
@@ -216,10 +221,10 @@ pub fn place(
         let new_sha = sha256_hex(data);
         let mut write = true;
         if let Some(cur) = read_existing(&dest)? {
-            if is_relais(&cur) {
+            if let Some(mark) = foreign_mark(&cur, foreign_markers) {
                 out.skipped.push(Skipped {
                     path: dest,
-                    reason: "belongs to relais".into(),
+                    reason: format!("carries the mark {mark}, so it belongs to another tool"),
                 });
                 continue;
             }
@@ -264,7 +269,11 @@ pub fn place(
 /// part name `is_part` accepts (a catalog part answers to its aliases too):
 /// only those whose sha still matches; changed and relais-owned files stay and
 /// are reported.
-pub fn remove(is_part: impl Fn(&str) -> bool, store: &mut Store) -> Result<Removal, Exit> {
+pub fn remove(
+    is_part: impl Fn(&str) -> bool,
+    foreign_markers: &[String],
+    store: &mut Store,
+) -> Result<Removal, Exit> {
     let mine: Vec<(String, String)> = store
         .receipt
         .entries
@@ -280,10 +289,13 @@ pub fn remove(is_part: impl Fn(&str) -> bool, store: &mut Store) -> Result<Remov
         let p = PathBuf::from(path);
         match read_existing(&p)? {
             None => {}
-            Some(cur) if is_relais(&cur) => out.kept.push(Skipped {
-                path: p,
-                reason: "belongs to relais".into(),
-            }),
+            Some(cur) if foreign_mark(&cur, foreign_markers).is_some() => {
+                let mark = foreign_mark(&cur, foreign_markers).unwrap_or_default();
+                out.kept.push(Skipped {
+                    path: p,
+                    reason: format!("carries the mark {mark}, so it belongs to another tool"),
+                })
+            }
             Some(cur) if sha256_hex(&cur) == *sha => {
                 fs::remove_file(&p)
                     .map_err(|e| Exit::Failed(format!("cannot remove {}: {e}", p.display())))?;
@@ -374,10 +386,14 @@ mod tests {
         }
     }
 
+    fn marks() -> Vec<String> {
+        vec!["relais:begin".to_string()]
+    }
+
     #[test]
     fn placement_records_sha256s_and_removal_deletes_them() {
         let mut e = env();
-        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, false).unwrap();
+        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, false, &marks()).unwrap();
         assert_eq!(r.placed.len(), 3);
         assert!(r.skipped.is_empty());
         assert_eq!(
@@ -400,7 +416,7 @@ mod tests {
         assert_eq!(shas, vec![sha256_hex(b"agent v1")]);
         assert!(e.store.pending().is_empty());
 
-        let rm = remove(|r| r == "p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &marks(), &mut e.store).unwrap();
         assert_eq!(rm.removed.len(), 3);
         assert!(rm.kept.is_empty());
         assert!(!e.claude.join("skills/alpha").exists());
@@ -414,13 +430,13 @@ mod tests {
         fs::create_dir_all(f.parent().unwrap()).unwrap();
         fs::write(&f, b"mine").unwrap();
 
-        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, false).unwrap();
+        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, false, &marks()).unwrap();
         assert_eq!(r.skipped.len(), 1);
         assert_eq!(r.skipped[0].path, f);
         assert_eq!(fs::read(&f).unwrap(), b"mine");
         assert_eq!(r.placed.len(), 2);
 
-        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, true).unwrap();
+        let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, true, &marks()).unwrap();
         assert!(r.skipped.is_empty());
         assert_eq!(r.backups.len(), 1);
         let (backup, from) = &r.backups[0];
@@ -433,10 +449,10 @@ mod tests {
     #[test]
     fn a_changed_file_is_kept_on_removal() {
         let mut e = env();
-        place(&e.bundle, &e.part, &e.claude, &mut e.store, false).unwrap();
+        place(&e.bundle, &e.part, &e.claude, &mut e.store, false, &marks()).unwrap();
         let f = e.claude.join("agents/rev.md");
         fs::write(&f, b"edited").unwrap();
-        let rm = remove(|r| r == "p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &marks(), &mut e.store).unwrap();
         assert_eq!(rm.removed.len(), 2);
         assert_eq!(rm.kept.len(), 1);
         assert_eq!(rm.kept[0].path, f);
@@ -452,7 +468,15 @@ mod tests {
         fs::write(&f, theirs).unwrap();
 
         for replace in [false, true] {
-            let r = place(&e.bundle, &e.part, &e.claude, &mut e.store, replace).unwrap();
+            let r = place(
+                &e.bundle,
+                &e.part,
+                &e.claude,
+                &mut e.store,
+                replace,
+                &marks(),
+            )
+            .unwrap();
             assert!(r.skipped.iter().any(|s| s.path == f));
             assert!(r.backups.is_empty());
             assert_eq!(fs::read(&f).unwrap(), theirs);
@@ -470,7 +494,7 @@ mod tests {
             ))
             .unwrap();
         e.store.done(idx).unwrap();
-        let rm = remove(|r| r == "p", &mut e.store).unwrap();
+        let rm = remove(|r| r == "p", &marks(), &mut e.store).unwrap();
         assert!(rm.kept.iter().any(|s| s.path == f));
         assert_eq!(fs::read(&f).unwrap(), theirs);
     }

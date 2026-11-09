@@ -19,6 +19,10 @@ pub struct Catalog {
     pub skills_version: String,
     pub skills_sha256: String,
     pub profiles: BTreeMap<String, Vec<String>>,
+    pub audit: AuditPaths,
+    /// A line of a placed file containing one of these marks it as another
+    /// tool's: grh leaves such a file alone.
+    pub foreign_markers: Vec<String>,
     /// ADR-0064's list of the parts: every edge points to an earlier entry.
     pub order: Vec<String>,
     #[serde(rename = "part")]
@@ -32,6 +36,9 @@ struct RawCatalog {
     skills_version: String,
     skills_sha256: String,
     profiles: BTreeMap<String, Vec<String>>,
+    #[serde(default)]
+    audit: AuditPaths,
+    foreign_markers: Vec<String>,
     order: Vec<String>,
     #[serde(rename = "part")]
     parts: Vec<Part>,
@@ -46,12 +53,26 @@ impl TryFrom<RawCatalog> for Catalog {
             skills_version: raw.skills_version,
             skills_sha256: raw.skills_sha256,
             profiles: raw.profiles,
+            audit: raw.audit,
+            foreign_markers: raw.foreign_markers,
             order: raw.order,
             parts: raw.parts,
         }
         .checked()
         .map_err(|e| text(&e))
     }
+}
+
+/// The repository paths the audit's signals look for, relative to the root.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AuditPaths {
+    #[serde(default)]
+    pub adr_folder: Vec<String>,
+    #[serde(default)]
+    pub claude_set_up: Vec<String>,
+    #[serde(default)]
+    pub ci_present: Vec<String>,
 }
 
 /// The command a name was typed for, so a notice can name its replacement.
@@ -147,6 +168,24 @@ impl Catalog {
             if let Some(member) = members.iter().find(|m| self.part(m).is_none()) {
                 return Err(invalid(format!(
                     "profile {profile} names unknown part {member}"
+                )));
+            }
+        }
+        if self.foreign_markers.iter().all(|m| m.is_empty()) {
+            return Err(invalid(
+                "foreign_markers must list at least one non-empty mark: files carrying one are never overwritten or removed",
+            ));
+        }
+        let audit = &self.audit;
+        for path in audit
+            .adr_folder
+            .iter()
+            .chain(&audit.claude_set_up)
+            .chain(&audit.ci_present)
+        {
+            if !crate::manifest::stays_inside(path) {
+                return Err(invalid(format!(
+                    "the [audit] path {path:?} must be relative and stay inside the repository"
                 )));
             }
         }
@@ -363,7 +402,7 @@ mod tests {
             )
         };
         let mut out = format!(
-            "skills_repo = \"o/s\"\nskills_version = \"1\"\nskills_sha256 = \"x\"\norder = {}\n[profiles]\n",
+            "skills_repo = \"o/s\"\nskills_version = \"1\"\nskills_sha256 = \"x\"\nforeign_markers = [\"m:begin\"]\norder = {}\n[profiles]\n",
             list(order)
         );
         for (name, needs, enhances, aliases) in parts {

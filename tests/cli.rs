@@ -101,7 +101,7 @@ impl Fx {
             &skills,
         );
         catalog.push_str(&format!(
-            "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\n\
+            "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\nforeign_markers = [\"relais:begin\"]\n\
              order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\"]\n\
              [profiles]\nsolo = [\"gate\", \"guardrails\"]\n",
             sha256_hex(&skills)
@@ -764,45 +764,88 @@ fn an_unreachable_armed_repo_keeps_its_entry_and_the_binary_and_exits_1() {
     assert_eq!(fx.files("bin"), ["amont"]);
 }
 
-fn audit_install(fx: &Fx) -> (String, Vec<String>) {
+/// Replace the fixture catalog with the shipped one, whose parts carry the
+/// audit rules.
+fn use_shipped_catalog(fx: &Fx) {
+    put(
+        &fx.p("catalog.toml"),
+        include_str!("../catalog.toml").as_bytes(),
+    );
+}
+
+fn audit_install(fx: &Fx) -> (Option<String>, Vec<String>) {
     git_init(fx);
     let o = fx.grh("work", &[], &["audit", "--json"]);
     assert_eq!(code(&o), 0, "{}", err(&o));
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(v["schema"], 2);
     let warnings = v["warnings"]
         .as_array()
         .unwrap()
         .iter()
         .map(|w| w.as_str().unwrap().to_string())
         .collect();
-    (v["install"].as_str().unwrap().to_string(), warnings)
+    (v["install"].as_str().map(str::to_string), warnings)
 }
 
 #[test]
-fn audit_of_a_rust_repo_with_husky_recommends_solo_and_warns() {
+fn audit_of_a_rust_repo_with_husky_recommends_the_gates_and_warns() {
     let fx = Fx::new();
+    use_shipped_catalog(&fx);
     put(&fx.p("work/src/main.rs"), b"fn main() {}\n");
     put(&fx.p("work/.husky/pre-commit"), b"#!/bin/sh\n");
     let (install, warnings) = audit_install(&fx);
-    assert_eq!(install, "grh install solo");
+    assert_eq!(install.as_deref(), Some("grh install greengate greenpiste"));
     assert!(warnings.iter().any(|w| w.contains("husky")), "{warnings:?}");
 }
 
 #[test]
-fn audit_of_a_typescript_repo_with_adrs_recommends_team() {
+fn audit_of_a_typescript_repo_with_adrs_recommends_decisions_and_conform() {
     let fx = Fx::new();
+    use_shipped_catalog(&fx);
     put(&fx.p("work/src/a.ts"), b"export {};\n");
     put(&fx.p("work/docs/adr/0001-x.md"), b"# 1\n");
     let (install, _) = audit_install(&fx);
-    assert_eq!(install, "grh install team");
+    assert_eq!(
+        install.as_deref(),
+        Some("grh install greengate greenpiste decisions conform")
+    );
 }
 
 #[test]
-fn audit_of_an_empty_repo_recommends_solo() {
+fn audit_of_an_empty_repo_with_no_rules_has_nothing_to_install() {
     let fx = Fx::new();
     let (install, warnings) = audit_install(&fx);
-    assert_eq!(install, "grh install solo");
+    assert_eq!(install, None);
     assert!(warnings.is_empty(), "{warnings:?}");
+    let o = fx.grh("work", &[], &["audit"]);
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    let text = String::from_utf8_lossy(&o.stdout).into_owned();
+    assert!(text.trim_end().ends_with("nothing to install"), "{text}");
+}
+
+#[test]
+fn audit_ending_on_a_closed_pipe_exits_0_without_a_panic() {
+    let fx = Fx::new();
+    use_shipped_catalog(&fx);
+    git_init(&fx);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_grh"))
+        .arg("audit")
+        .current_dir(fx.p("work"))
+        .env_clear()
+        .env("HOME", fx.p("home"))
+        .env("XDG_STATE_HOME", fx.p("state"))
+        .env("GRH_CATALOG", fx.p("catalog.toml"))
+        .env("PATH", "/usr/bin:/bin")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    let o = child.wait_with_output().unwrap();
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert!(!err(&o).contains("panicked"), "{}", err(&o));
 }
 
 #[test]
@@ -1277,8 +1320,9 @@ fn a_part_run_through_its_alias_warns_before_the_exec_and_keeps_stdout() {
 }
 
 #[test]
-fn audit_rows_with_the_gate_installed_name_the_parts_as_before() {
+fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
     let fx = Fx::new();
+    use_shipped_catalog(&fx);
     git_init(&fx);
     executable(&fx.p("bin/amont"), FAKE);
     put(&fx.p("fstate/amont.repo"), b"");
@@ -1301,8 +1345,8 @@ fn audit_rows_with_the_gate_installed_name_the_parts_as_before() {
     assert_eq!(
         names,
         [
-            "gate",
-            "guardrails",
+            "greengate",
+            "greenpiste",
             "decisions",
             "conform",
             "router",
@@ -1312,7 +1356,7 @@ fn audit_rows_with_the_gate_installed_name_the_parts_as_before() {
         ]
     );
     assert_eq!(rows[0].1, "already here", "{rows:?}");
-    assert_eq!(v["install"], "grh install solo");
+    assert_eq!(v["install"], "grh install greenpiste");
 }
 
 #[test]
@@ -1321,7 +1365,7 @@ fn audit_reads_the_gate_state_from_the_catalog_query() {
     // reads a JSON path the fake never prints: audit must follow the
     // catalog, so the gate is no longer "already here".
     let fx = Fx::new();
-    let catalog = fs::read_to_string(fx.p("catalog.toml")).unwrap().replacen(
+    let catalog = include_str!("../catalog.toml").replacen(
         "[\"installed\", \"state\"]",
         "[\"nowhere\", \"state\"]",
         1,

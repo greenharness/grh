@@ -161,12 +161,15 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             &mut sum,
             part,
             only_repo.as_deref(),
+            &cat.foreign_markers,
         ));
     }
     if only_repo.is_none() {
         for x in &ext_todo {
             ui.say(x);
-            failures.extend(remove_extension(&ui, &mut store, x).settle(&mut sum));
+            failures.extend(
+                remove_extension(&ui, &mut store, x, &cat.foreign_markers).settle(&mut sum),
+            );
         }
     }
     sum.print(&ui);
@@ -188,6 +191,7 @@ fn remove_part(
     sum: &mut Summary,
     part: &Part,
     only_repo: Option<&Path>,
+    foreign_markers: &[String],
 ) -> Vec<Exit> {
     let name = part.name();
     let mut failures: Vec<Exit> = Vec::new();
@@ -209,7 +213,7 @@ fn remove_part(
     for level in [Level::Repo, Level::Machine] {
         failures.extend(undo_entries(&undo, store, &entries, level).settle(sum));
         if level == Level::Machine && only_repo.is_none() {
-            match skills::remove(|recorded| part.answers_to(recorded), store) {
+            match skills::remove(|recorded| part.answers_to(recorded), foreign_markers, store) {
                 Ok(r) => {
                     if !r.removed.is_empty() {
                         ui.ok(&format!(
@@ -306,7 +310,7 @@ fn undo_entries(undo: &Undo, store: &mut Store, entries: &[Entry], level: Level)
 
 /// Take out an extension: its tool, files, servers and binary, each only as
 /// far as the receipt recorded it, with no manifest to read.
-fn remove_extension(ui: &Ui, store: &mut Store, name: &str) -> Undone {
+fn remove_extension(ui: &Ui, store: &mut Store, name: &str, foreign_markers: &[String]) -> Undone {
     let mut failures: Vec<Exit> = Vec::new();
     let mut sum = Summary::default();
     let entries: Vec<Entry> = store
@@ -356,7 +360,7 @@ fn remove_extension(ui: &Ui, store: &mut Store, name: &str) -> Undone {
         .cloned()
         .collect();
     failures.extend(undo_entries(&undo, store, &repo_files, Level::Repo).settle(&mut sum));
-    failures.extend(extension::remove(ui, store, name));
+    failures.extend(extension::remove(ui, store, name, foreign_markers));
     failures.extend(restore_backups(ui, store, name, &entries).settle(&mut sum));
     failures.extend(remove_binary(
         ui,

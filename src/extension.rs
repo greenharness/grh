@@ -170,7 +170,15 @@ pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
     let store = Store::open_migrating(|name| catalog.name_of_alias(name))?;
-    let mut run = Run::new(None, ui, store, opts.replace, repo, Some(bundle));
+    let mut run = Run::new(
+        None,
+        &catalog.foreign_markers,
+        ui,
+        store,
+        opts.replace,
+        repo,
+        Some(bundle),
+    );
     let mut failures: Vec<Exit> = run.part(&part);
     let (ui, mut store, mut sum) = run.into_parts();
 
@@ -300,7 +308,7 @@ pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
 }
 
 /// Take out what the receipt holds for the extension part `name`.
-pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
+pub fn remove(ui: &Ui, store: &mut Store, name: &str, foreign_markers: &[String]) -> Vec<Exit> {
     let mut failures = Vec::new();
     let entries: Vec<Entry> = store
         .receipt
@@ -342,7 +350,7 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
             }
         }
     }
-    match skills::remove(|recorded| recorded == name, store) {
+    match skills::remove(|recorded| recorded == name, foreign_markers, store) {
         Ok(r) => {
             if !r.removed.is_empty() {
                 ui.ok(&format!(

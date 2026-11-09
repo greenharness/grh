@@ -232,13 +232,39 @@ fn audit_reproduces_the_goldens_recorded_from_0_2_0() {
         let mut got = audit(bin, fx);
         rename_parts(&mut want);
         rename_parts(&mut got);
-        assert_eq!(got, want, "fixture {}", fx.name);
+        if got["schema"] != 2 {
+            assert_eq!(got, want, "fixture {}", fx.name);
+            continue;
+        }
+        for key in ["parts", "warnings", "ci", "adr_folder", "languages", "dir"] {
+            assert_eq!(got[key], want[key], "fixture {}: {key}", fx.name);
+        }
+        let new = &expected_new()[fx.name];
+        assert_eq!(
+            got["install"], new["install"],
+            "fixture {}: install",
+            fx.name
+        );
+        assert_eq!(got["hooks"], new["hooks"], "fixture {}: hooks", fx.name);
     }
+}
+
+/// What the new audit must say where it differs from the 0.2.0 goldens: the
+/// `install` line and the `hooks` list under the catalog's part names.
+fn expected_new() -> Value {
+    let path = fixtures_dir().join("expected-new.json");
+    serde_json::from_str(&fs::read_to_string(path).expect("expected-new.json")).unwrap()
 }
 
 #[test]
 fn every_fixture_has_a_golden() {
+    let expected = expected_new();
     for fx in FIXTURES {
         assert!(golden_path(fx).is_file(), "no golden for {}", fx.name);
+        assert!(
+            expected.get(fx.name).is_some(),
+            "no expected for {}",
+            fx.name
+        );
     }
 }
