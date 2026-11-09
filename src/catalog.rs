@@ -54,15 +54,15 @@ struct RawCatalog {
 /// holds where, and the sha256 of the bytes grh built in as its copy.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Pin {
-    name: String,
+pub(crate) struct Pin {
+    pub(crate) name: String,
     /// `owner/name` on GitHub.
-    repo: String,
+    pub(crate) repo: String,
     /// The release tag, which starts with `v`.
-    tag: String,
+    pub(crate) tag: String,
     #[serde(default = "default_asset")]
-    asset: String,
-    sha256: String,
+    pub(crate) asset: String,
+    pub(crate) sha256: String,
 }
 
 fn default_asset() -> String {
@@ -76,56 +76,59 @@ mod embedded {
 
 impl Pin {
     /// The part this pin stands for, from its copy: refused unless the copy
-    /// is the bytes pinned and a manifest for exactly this release.
+    /// is the bytes pinned and a valid manifest for exactly this release.
     fn resolve(&self, copies: &[(&str, &[u8])]) -> Result<Part, Exit> {
         let refuse = |why: String| invalid(format!("pinned part {}: {why}", self.name));
-        let Some(version) = self.tag.strip_prefix('v') else {
-            return Err(refuse(format!(
-                "the tag {} does not start with v",
-                self.tag
-            )));
-        };
         let Some((_, bytes)) = copies.iter().find(|(name, _)| *name == self.name) else {
             return Err(refuse(format!(
                 "no copy manifests/{}.toml of {} from {} {}",
                 self.name, self.asset, self.repo, self.tag
             )));
         };
+        self.check_copy(bytes).map_err(refuse)
+    }
+
+    /// The one check of a copy's bytes against this pin, shared by the
+    /// catalog load and `pins::pin`: the reason it is refused, else its part.
+    pub(crate) fn check_copy(&self, bytes: &[u8]) -> Result<Part, String> {
+        let Some(version) = self.tag.strip_prefix('v') else {
+            return Err(format!("the tag {} does not start with v", self.tag));
+        };
         let got = sha256_hex(bytes);
         if got != self.sha256 {
-            return Err(refuse(format!(
+            return Err(format!(
                 "manifests/{}.toml has sha256 {got}, the pin says {}",
                 self.name, self.sha256
-            )));
+            ));
         }
-        let part = std::str::from_utf8(bytes)
-            .map_err(|e| refuse(format!("the copy is not UTF-8: {e}")))
-            .and_then(|source| Manifest::parse(source).map_err(|e| refuse(text(&e))))?;
+        let source =
+            std::str::from_utf8(bytes).map_err(|e| format!("the copy is not UTF-8: {e}"))?;
+        let part = Manifest::parse(source).map_err(|e| text(&e))?;
         if part.name() != self.name {
-            return Err(refuse(format!("the copy names the part {}", part.name())));
+            return Err(format!("the copy names the part {}", part.name()));
         }
         if part.extension.version != version {
-            return Err(refuse(format!(
+            return Err(format!(
                 "the copy is version {}, the tag {} says {version}",
                 part.extension.version, self.tag
-            )));
+            ));
         }
         if let Some(release) = part.release() {
             if release.version != version {
-                return Err(refuse(format!(
+                return Err(format!(
                     "its [tool.release] version is {}, the tag {} says {version}",
                     release.version, self.tag
-                )));
+                ));
             }
             if release.repo != self.repo {
-                return Err(refuse(format!(
+                return Err(format!(
                     "its [tool.release] repo is {}, the pin says {}",
                     release.repo, self.repo
-                )));
+                ));
             }
         }
         if !part.is_published() {
-            return Err(refuse("the copy says published = false".to_string()));
+            return Err("the copy says published = false".to_string());
         }
         Ok(part)
     }

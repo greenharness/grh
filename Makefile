@@ -2,7 +2,7 @@
 # reads the pin (the same reason as aval's Makefile).
 CARGO := $(shell command -v rustup >/dev/null 2>&1 && test -x "$(HOME)/.cargo/bin/cargo" && echo "$(HOME)/.cargo/bin/cargo" || echo cargo)
 
-.PHONY: all check lint test build fmt
+.PHONY: all check lint test build fmt pins-check
 
 all: check
 
@@ -21,3 +21,8 @@ build:
 
 fmt:
 	$(CARGO) fmt --all
+
+## Re-download every pinned manifest and compare it with its pin and copy.
+## Needs the network, so it is not part of `check`; CI runs it in its own job.
+pins-check:
+	$(CARGO) run --locked --example pins -- check

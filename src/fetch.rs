@@ -115,6 +115,8 @@ impl Routes {
 enum Hit {
     Status(u16),
     Transient(String),
+    /// The API release listing has no asset of that name.
+    Missing(String),
     Fatal(String),
 }
 
@@ -123,7 +125,82 @@ impl Hit {
         match self {
             Hit::Status(code) => *code >= 500 || *code == 429,
             Hit::Transient(_) => true,
-            Hit::Fatal(_) => false,
+            Hit::Missing(_) | Hit::Fatal(_) => false,
+        }
+    }
+
+    fn kind(&self) -> FailureKind {
+        match self {
+            Hit::Status(404) | Hit::Missing(_) => FailureKind::NotFound,
+            Hit::Status(_) | Hit::Transient(_) if self.retryable() => FailureKind::Unreachable,
+            Hit::Status(_) | Hit::Transient(_) | Hit::Fatal(_) => FailureKind::Other,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FailureKind {
+    NotFound,
+    Unreachable,
+    Other,
+}
+
+impl FailureKind {
+    /// Two routes failed: a route that answered "not found" decides; else
+    /// unreachable only when both were.
+    fn both(self, other: FailureKind) -> FailureKind {
+        match (self, other) {
+            (FailureKind::NotFound, _) | (_, FailureKind::NotFound) => FailureKind::NotFound,
+            (FailureKind::Unreachable, FailureKind::Unreachable) => FailureKind::Unreachable,
+            (FailureKind::Unreachable, FailureKind::Other)
+            | (FailureKind::Other, FailureKind::Unreachable | FailureKind::Other) => {
+                FailureKind::Other
+            }
+        }
+    }
+}
+
+/// Why a download failed; each variant carries the `cannot download …` text
+/// `Exit` shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchFailure {
+    /// A route answered 404, the release listing has no such asset, or the
+    /// `file://` path does not exist.
+    NotFound(String),
+    /// Every route tried failed with a transport error, a 5xx or a 429 after
+    /// its retries.
+    Unreachable(String),
+    Other(String),
+}
+
+impl FetchFailure {
+    fn of(kind: FailureKind, message: String) -> Self {
+        match kind {
+            FailureKind::NotFound => FetchFailure::NotFound(message),
+            FailureKind::Unreachable => FetchFailure::Unreachable(message),
+            FailureKind::Other => FetchFailure::Other(message),
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match self {
+            FetchFailure::NotFound(m) | FetchFailure::Unreachable(m) | FetchFailure::Other(m) => m,
+        }
+    }
+}
+
+impl std::fmt::Display for FetchFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.message())
+    }
+}
+
+impl From<FetchFailure> for Exit {
+    fn from(failure: FetchFailure) -> Exit {
+        match failure {
+            FetchFailure::NotFound(m) | FetchFailure::Unreachable(m) | FetchFailure::Other(m) => {
+                Exit::Failed(m)
+            }
         }
     }
 }
@@ -132,7 +209,7 @@ impl std::fmt::Display for Hit {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Hit::Status(code) => write!(f, "HTTP {code}"),
-            Hit::Transient(text) | Hit::Fatal(text) => f.write_str(text),
+            Hit::Transient(text) | Hit::Missing(text) | Hit::Fatal(text) => f.write_str(text),
         }
     }
 }
@@ -310,7 +387,7 @@ fn api_once(
         .as_array()
         .and_then(|assets| assets.iter().find(|a| a["name"] == *name))
         .and_then(|asset| asset["id"].as_u64())
-        .ok_or_else(|| Hit::Fatal(format!("no asset {name} in release {tag}")))?;
+        .ok_or_else(|| Hit::Missing(format!("no asset {name} in release {tag}")))?;
     get_following(
         agent,
         &format!("{api}/repos/{owner}/{repo}/releases/assets/{id}"),
@@ -372,7 +449,7 @@ fn api_route(
         Err(failure) if with_token.is_some() => {
             let rejection = match failure.hit {
                 Hit::Status(code @ (401 | 403)) => Some(code),
-                Hit::Status(_) | Hit::Transient(_) | Hit::Fatal(_) => None,
+                Hit::Status(_) | Hit::Transient(_) | Hit::Missing(_) | Hit::Fatal(_) => None,
             };
             let Some(code) = rejection else {
                 return Err(failure);
@@ -389,9 +466,16 @@ fn api_route(
     }
 }
 
-fn download_with(url: &str, routes: &Routes, cache: &Cache) -> Result<Vec<u8>, Exit> {
+fn download_with(url: &str, routes: &Routes, cache: &Cache) -> Result<Vec<u8>, FetchFailure> {
     if let Some(path) = url.strip_prefix("file://") {
-        return std::fs::read(path).map_err(|e| Exit::Failed(format!("cannot read {url}: {e}")));
+        return std::fs::read(path).map_err(|e| {
+            let message = format!("cannot read {url}: {e}");
+            if e.kind() == std::io::ErrorKind::NotFound {
+                FetchFailure::NotFound(message)
+            } else {
+                FetchFailure::Other(message)
+            }
+        });
     }
     if let Some(bytes) = cache.lock().ok().and_then(|c| c.get(url).cloned()) {
         return Ok(bytes);
@@ -399,31 +483,40 @@ fn download_with(url: &str, routes: &Routes, cache: &Cache) -> Result<Vec<u8>, E
     let agent = agent();
     let release = parse_release_url(url);
     let api = release.as_ref().and_then(|r| routes.api_for(r.base));
-    let fail = |detail: String| Exit::Failed(format!("cannot download {url} ({detail})"));
+    let fail = |kind: FailureKind, detail: String| {
+        FetchFailure::of(kind, format!("cannot download {url} ({detail})"))
+    };
     let outcome = match (&release, &api) {
         (Some(release), Some(api)) if routes.token.is_some() => {
             api_route(&agent, url, api, release, routes).or_else(|api_failure| {
                 routes.say_switch(url, "API", "web");
                 web_route(&agent, url, routes).map_err(|web_failure| {
-                    fail(format!(
-                        "API: {}; web fallback: {}",
-                        api_failure.describe(),
-                        web_failure.describe()
-                    ))
+                    fail(
+                        api_failure.hit.kind().both(web_failure.hit.kind()),
+                        format!(
+                            "API: {}; web fallback: {}",
+                            api_failure.describe(),
+                            web_failure.describe()
+                        ),
+                    )
                 })
             })
         }
         (Some(release), Some(api)) => web_route(&agent, url, routes).or_else(|web_failure| {
             routes.say_switch(url, "web", "API");
             api_route(&agent, url, api, release, routes).map_err(|api_failure| {
-                fail(format!(
-                    "{}; API fallback: {}",
-                    web_failure.describe(),
-                    api_failure.describe()
-                ))
+                fail(
+                    web_failure.hit.kind().both(api_failure.hit.kind()),
+                    format!(
+                        "{}; API fallback: {}",
+                        web_failure.describe(),
+                        api_failure.describe()
+                    ),
+                )
             })
         }),
-        _ => web_route(&agent, url, routes).map_err(|failure| fail(failure.describe())),
+        _ => web_route(&agent, url, routes)
+            .map_err(|failure| fail(failure.hit.kind(), failure.describe())),
     };
     let bytes = outcome?;
     if let Ok(mut entries) = cache.lock() {
@@ -434,8 +527,21 @@ fn download_with(url: &str, routes: &Routes, cache: &Cache) -> Result<Vec<u8>, E
 
 /// Fetch `url` (`http(s)://` or `file://`) into memory; a GitHub release
 /// URL is retried and falls back between the web and API routes.
-pub fn download(url: &str) -> Result<Vec<u8>, Exit> {
+pub fn download(url: &str) -> Result<Vec<u8>, FetchFailure> {
     download_with(url, &Routes::from_env(), process_cache())
+}
+
+/// `download` waiting `retry_delay` between attempts instead of 1 s then 4 s:
+/// for tests that count retries, not delays.
+pub fn download_with_retry_delay(
+    url: &str,
+    retry_delay: Duration,
+) -> Result<Vec<u8>, FetchFailure> {
+    let routes = Routes {
+        backoff: [retry_delay; ATTEMPTS - 1],
+        ..Routes::from_env()
+    };
+    download_with(url, &routes, process_cache())
 }
 
 /// The one cache of a grh process: `download` is its only entry point, so
@@ -447,7 +553,7 @@ fn process_cache() -> &'static Cache {
 
 /// Download `url` and check it against `pin`; nothing is returned on a mismatch.
 pub fn download_verified(url: &str, pin: &str) -> Result<Vec<u8>, Exit> {
-    let bytes = download(url)?;
+    let bytes = download(url).map_err(Exit::from)?;
     let got = sha256_hex(&bytes);
     if !got.eq_ignore_ascii_case(pin.trim()) {
         return Err(Exit::Failed(format!(
@@ -732,7 +838,7 @@ mod tests {
     }
 
     fn fetch(url: &str, routes: &Routes) -> Result<Vec<u8>, Exit> {
-        download_with(url, routes, &Cache::default())
+        download_with(url, routes, &Cache::default()).map_err(Exit::from)
     }
 
     fn listing() -> Reply {

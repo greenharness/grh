@@ -12,6 +12,7 @@ pub mod install;
 pub mod manifest;
 pub mod ops;
 pub mod owner;
+pub mod pins;
 pub mod receipt;
 pub mod skills;
 pub mod status;

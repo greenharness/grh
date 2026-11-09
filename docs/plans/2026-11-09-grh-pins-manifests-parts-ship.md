@@ -141,7 +141,7 @@ sees. It closes build step 2 (grh goes generic).
   `build.rs`, `Cargo.toml` (build script), `.gitattributes`,
   `src/catalog.rs`, `src/manifest.rs`, `tests/cli.rs`,
   `tests/fixtures/pinned/`.
-- [ ] Phase 2 — the `pins` example and CI: `examples/pins.rs`,
+- [x] Phase 2 — the `pins` example and CI: `examples/pins.rs`,
   `src/fetch.rs` (`download` returns a typed failure instead of one `Exit::Failed`
   string: not found = a route answered 404, the API listing has no such
   asset, or a `file://` read gave NotFound; unreachable = every route
