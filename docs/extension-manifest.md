@@ -107,3 +107,46 @@ In `grh audit --json`, `signals` holds the repository facts only
 ## v4 (harness 0.4)
 
 - `[extension]` `experimental` (default false): the part is an experiment, opt-in everywhere. `grh install --all` and the `install` line of `grh audit` leave it out (audit still gives its row a verdict, names the part in the `experimental` list of `--json`, and says how to try it when it would recommend it); it installs by name. A part that is not experimental may not `needs` an experimental one. Requires `harness = ">=0.4"` (a requirement that 0.3 satisfies is refused).
+
+## Shipping a manifest (pinned parts)
+
+A part's repository can ship its own `greenharness.toml`. grh's catalog then
+pins it instead of holding it inline:
+
+```toml
+[[pinned]]
+name = "greengate"
+repo = "greenharness/greengate"
+tag = "v2.4.0"
+sha256 = "…"            # of the asset's bytes
+# asset = "greenharness.toml" (the default)
+```
+
+grh builds the pinned copy (`manifests/<name>.toml`) into its binary and
+checks it when the catalog loads, with no network: the bytes must match the
+`sha256`, the tag must start with `v`, `[extension] name` must be the pin's
+name and `[extension] version` the tag without `v`, a `[tool.release]` must
+name the pin's `repo` and that version, and `published` must not be `false`.
+A copy with no pin, or a part both inline and pinned, is refused.
+
+What the tool's repository ships:
+
+- `greenharness.toml` at its root, with no sums: the tarballs it would
+  describe do not exist yet when the file is committed.
+- Its release job writes `[tool.release]` (`repo`, `version`, and `sha256`
+  of each unix target's tarball) into the manifest after the tarballs are
+  built, puts it in `dist/` before `SHA256SUMS` is computed, and uploads it
+  with the other assets, so it is checksummed (and attested where the
+  release attests `SHA256SUMS`).
+- Its release guard checks `[extension] version` against the tag, beside the
+  `Cargo.toml` check.
+- A released manifest is never uploaded again under the same tag
+  (`--clobber`): a fix ships under a new tag, so grh's pin stays valid.
+
+In grh's repository: `cargo run --locked --example pins -- pin <name> <repo>
+<tag>` downloads the asset, checks it as the catalog load does, writes the
+copy atomically and prints the `[[pinned]]` entry; `make pins-check` (and the
+`pinned manifests` CI job) re-downloads every pin and compares it with the
+pin and the copy. The example's exit codes are its own: 0 done, 1 mismatch,
+missing asset or refusal, 2 usage, 3 every failing host unreachable after
+the retries (1 wins when both happen).

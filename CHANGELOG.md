@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+### Added
+
+- **Pinned manifests.** A part whose repository ships its own
+  `greenharness.toml` can be a `[[pinned]]` entry in the catalog (repo, tag,
+  sha256); its copy is built into grh and checked at load, with no network.
+  No part is pinned yet, so grh behaves as 0.4.0. Maintainers pin a release
+  with `cargo run --example pins -- pin`, and CI re-checks every pin.
+
 ## v0.4.0
 
 ### Added

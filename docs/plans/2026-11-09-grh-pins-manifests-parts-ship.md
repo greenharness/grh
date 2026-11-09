@@ -151,7 +151,7 @@ sees. It closes build step 2 (grh goes generic).
   missing even when another host was unreachable; no second download
   function),
   `tests/pins.rs`, `.github/workflows/ci.yaml`.
-- [ ] Phase 3 — docs and the programme map: `docs/extension-manifest.md`,
+- [x] Phase 3 — docs and the programme map: `docs/extension-manifest.md`,
   `catalog.toml` (header comment), `CHANGELOG.md` (Unreleased),
   `decisions/docs/programmes/gate-guardrails/map.md` (build step 2 done,
   next step 3).
@@ -169,12 +169,52 @@ sees. It closes build step 2 (grh goes generic).
   pins.
 - 2026-11-09 — the copies are embedded by a `build.rs` that lists
   `manifests/*.toml`, not by a new crate (`include_dir`) or a hand-kept list.
+- 2026-11-09 — the `pinned manifests` CI job calls `cargo run --example pins
+  -- check` directly, not `make pins-check`: make turns every failing exit
+  into 2 and would hide 3 (an outage, a warning on a pull request); the make
+  target is the same command for running it locally.
+- 2026-11-09 — implementation went through relais; Phase 1's candidate was
+  salvaged by hand (its reviewer could not be spawned, and it lacked the
+  refusal unit tests, which were written by hand); Phase 2's first candidate
+  was revised once (a retry-delay variable reachable in release builds, the
+  pin checks duplicated outside the catalog).
 - 2026-11-09 — the pin and check tools are a cargo example reusing
   `src/fetch.rs`, not shell scripts (panel: shell TOML parsing, the sha256
   tool on macOS, retries through a GitHub outage and atomic writes all come
   free from grh's own code).
 
 ## Verification
+
+Observed on the finished tree (2026-11-09):
+
+- Phase 1: `a_pinned_part_resolves_and_takes_part_in_order_and_needs`,
+  `a_pinned_part_with_a_tool_of_this_release_resolves` and
+  `each_pin_refusal_names_the_part_and_why` (every refusal: no copy on both
+  paths, sha256 with both sums, tag without `v`, unparsable, name, version,
+  `[tool.release]` version and repo, `published = false`, a copy with no
+  pin, inline and pinned, two pins, an alias clash) → green; removing the
+  `published` check and the `[tool.release] repo` check each turned it red
+  ("the catalog was accepted"); `a_pinned_part_installs_from_a_fixture_release_beside_gh_catalog`
+  → green; the build has no `manifests/` directory and the shipped catalog
+  loads; the 13 audit goldens unchanged.
+- Phase 2: `tests/pins.rs` (pin writes and prints a block the catalog
+  accepts, refuses to overwrite without `--replace`, a missing asset leaves
+  `manifests/` unchanged; check green, two byte-off pins both named,
+  `http://127.0.0.1:1` unreachable, `file://` without the asset not found, a
+  local server's listing without the asset not found, 503 on every attempt
+  unreachable, a mismatch plus an unreachable pin gives 1; `pin` and the
+  catalog refuse a wrong `[tool.release]` repo with the same reason; the
+  built example: `-h` 0, an unknown flag 2, `check` on a catalog with no pin
+  prints `0 pinned manifests`) → green; the existing `src/fetch.rs` tests
+  pass with no assertion edited; `grep GRH_RETRY_DELAY_MS src examples`
+  finds nothing.
+- Phase 3: `docs/extension-manifest.md` "Shipping a manifest" names the root
+  file without sums, the release job writing `[tool.release]`, the asset in
+  `SHA256SUMS`, the version guard and the no-re-upload rule; the programme
+  map says build step 2 is done and names step 3 (decisions, `relais
+  programme check` exit 0); `scripts/e2e.sh` against the real releases
+  installs every part and leaves HOME as it found it (exit 0); 201 tests,
+  clippy `-D warnings` and fmt green.
 
 - Phase 1: unit tests load a fixture catalog with one pin and its copy (the
   part is in `parts`, `order` names it, an inline part `needs` it and
