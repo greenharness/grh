@@ -297,9 +297,11 @@ fn a_status_query_without_an_answer_warns_that_its_row_reads_it_absent() {
         .filter_map(Value::as_str)
         .collect();
     assert!(
-        warnings
-            .iter()
-            .any(|w| w.starts_with("greengate: the repo status query gave no answer")),
+        warnings.iter().any(
+            |w| w.starts_with("greengate: the repo status query gave no answer")
+                && w.contains("; run `")
+                && w.ends_with("` to see why")
+        ),
         "{warnings:?}"
     );
     let row = doc["parts"]
@@ -309,6 +311,61 @@ fn a_status_query_without_an_answer_warns_that_its_row_reads_it_absent() {
         .find(|r| r["part"] == "greengate")
         .unwrap();
     assert_eq!(row["verdict"], "recommend");
+}
+
+#[test]
+fn a_failing_git_config_query_warns_and_names_the_command_to_run() {
+    let scratch = tempfile::tempdir().expect("tempdir");
+    let repo = scratch.path().join("repo");
+    let home = scratch.path().join("home");
+    let shim = scratch.path().join("shim");
+    for dir in [&repo, &home, &shim] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    git(&repo, &["init", "-q", "."]);
+    // A git whose `config` fails the way a corrupt repository config does.
+    let script = shim.join("git");
+    fs::write(
+        &script,
+        "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = config ] && exit 128; done\nexec /usr/bin/git \"$@\"\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let stubs = fixtures_dir().join("bin");
+    let out = Command::new(env!("CARGO_BIN_EXE_grh"))
+        .args(["audit", "--json"])
+        .current_dir(&repo)
+        .env_clear()
+        .env("HOME", &home)
+        .env("XDG_STATE_HOME", home.join("state"))
+        .env(
+            "PATH",
+            format!("{}:{}:/usr/bin:/bin", shim.display(), stubs.display()),
+        )
+        .output()
+        .expect("grh runs");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let doc: Value = serde_json::from_slice(&out.stdout).expect("audit JSON");
+    let warnings: Vec<&str> = doc["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        warnings.iter().any(
+            |w| w.contains("git config --get core.hooksPath failed (exit 128)")
+                && w.ends_with("run `git config --get core.hooksPath` to see why")
+        ),
+        "{warnings:?}"
+    );
 }
 
 #[test]

@@ -228,7 +228,8 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
     if opts.all && !opts.names.is_empty() {
         return Err(Exit::Usage(
-            "--all installs every published part but the experiments; name no parts with it".into(),
+            "--all installs every published part but the experiments;\nname no parts with it"
+                .into(),
         ));
     }
     let ui = Ui::new(opts.quiet);

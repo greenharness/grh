@@ -13,16 +13,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
+pub use crate::manifest::Level;
 use crate::manifest::{ExitPair, KeepBinary, RawStatus, Status};
 
 pub const VERSION: u32 = 2;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum Level {
-    Machine,
-    Repo,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

@@ -416,6 +416,26 @@ fn without_yes_on_a_non_tty_nothing_changes() {
 }
 
 #[test]
+fn the_all_failure_and_the_listing_heading_fit_in_80_columns() {
+    let fx = Fx::new();
+    let o = fx.grh("work", &[], &["install", "--all", "gate", "--yes"]);
+    assert_eq!(code(&o), 2);
+    let message = err(&o);
+    assert!(message.contains("name no parts with it"), "{message}");
+    for line in message.lines() {
+        assert!(line.chars().count() <= 80, "too wide: {line}");
+    }
+    let o = fx.grh("work", &[], &["install"]);
+    let listing = err(&o);
+    let heading: Vec<&str> = listing.lines().take_while(|l| *l != "parts:").collect();
+    assert!(heading.len() >= 2, "{listing}");
+    assert!(heading.iter().any(|l| l.contains("grh install --all")));
+    for line in heading {
+        assert!(line.chars().count() <= 80, "too wide: {line}");
+    }
+}
+
+#[test]
 fn a_bare_install_lists_parts_and_exits_2() {
     let fx = Fx::new();
     let o = fx.grh("work", &[], &["install"]);

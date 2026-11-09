@@ -181,7 +181,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
   `install::run`; raw mode, viewport and panic hook live in `src/checklist.rs`, and `install.rs` only calls it at the bare-install branch with no ratatui or crossterm import; off a terminal unchanged: `src/install.rs`, `src/ops.rs`,
   `src/main.rs`, `tests/cli.rs`, `tests/pty.rs`, `Cargo.toml` (dev-dependency
   for the pty test, named here with its MSRV ≤ 1.89, licence and no unsafe in the test).
-- [ ] Phase 5 — the carried 0.3.0 review lows: `src/audit.rs`,
+- [x] Phase 5 — the carried 0.3.0 review lows: `src/audit.rs`,
   `src/manifest.rs`, `src/catalog.rs`, `src/install.rs`, `src/ops.rs`,
   `tests/cli.rs`, `tests/audit_golden.rs`.
 - [ ] Phase 6 — docs and release 0.4.0: `README.md`, `CHANGELOG.md`,

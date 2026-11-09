@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use crate::exit::Exit;
-use crate::manifest::{Manifest, Signal};
+use crate::manifest::{AuditList, Manifest, Scope};
 use crate::ops::{text, Ui};
 
 const CATALOG: &str = include_str!("../catalog.toml");
@@ -142,15 +142,14 @@ impl Catalog {
                 .map_err(|e| invalid(format!("part {}: {}", part.name(), text(&e))))?;
             for rule in &part.recommend {
                 for c in &rule.when {
-                    let (list, name) = match c.signal {
-                        Signal::AdrFolder => (&self.audit.adr_folder, "adr_folder"),
-                        Signal::ClaudeSetUp => (&self.audit.claude_set_up, "claude_set_up"),
-                        Signal::CiPresent => (&self.audit.ci_present, "ci_present"),
-                        Signal::MachinePresent
-                        | Signal::RepoPresent
-                        | Signal::LanguageSupported
-                        | Signal::RepoFileHere
-                        | Signal::Dep(_) => continue,
+                    let Scope::RepositoryPaths(audit_list) = c.signal.scope() else {
+                        continue;
+                    };
+                    let name = audit_list.name();
+                    let list = match audit_list {
+                        AuditList::AdrFolder => &self.audit.adr_folder,
+                        AuditList::ClaudeSetUp => &self.audit.claude_set_up,
+                        AuditList::CiPresent => &self.audit.ci_present,
                     };
                     if list.is_empty() {
                         return Err(invalid(format!(

@@ -10,6 +10,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
 
+/// The level a tool installs at, as the manifest's status queries, the audit
+/// and the receipt name it. The receipt re-exports it, so the receipt depends
+/// on the manifest and never the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Level {
+    Machine,
+    Repo,
+}
+
+impl Level {
+    /// The level as the audit and the receipt name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Level::Machine => "machine",
+            Level::Repo => "repo",
+        }
+    }
+}
+
 /// The harness version this grh answers to in `[extension] harness`.
 pub const HARNESS_VERSION: (u64, u64, u64) = (0, 4, 0);
 
@@ -260,7 +280,63 @@ pub enum Signal {
     Dep(String),
 }
 
+/// The `[audit]` path list a repository signal reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditList {
+    AdrFolder,
+    ClaudeSetUp,
+    CiPresent,
+}
+
+impl AuditList {
+    /// The list's key under `[audit]`, which is also its signal's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            AuditList::AdrFolder => "adr_folder",
+            AuditList::ClaudeSetUp => "claude_set_up",
+            AuditList::CiPresent => "ci_present",
+        }
+    }
+}
+
+/// What a signal is a fact about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// One part: its status query at this level answered `present`.
+    PartStatus(Level),
+    /// One part: its repo file sits in a CI folder here.
+    PartFile,
+    /// The repository, read from the files of an `[audit]` list.
+    RepositoryPaths(AuditList),
+    /// The repository, read some other way.
+    Repository,
+}
+
+impl Scope {
+    /// Does the signal hold for one part rather than for the repository?
+    pub fn is_per_part(self) -> bool {
+        match self {
+            Scope::PartStatus(_) | Scope::PartFile => true,
+            Scope::RepositoryPaths(_) | Scope::Repository => false,
+        }
+    }
+}
+
 impl Signal {
+    /// What this signal is a fact about, and for the path signals which
+    /// `[audit]` list it reads.
+    pub fn scope(&self) -> Scope {
+        match self {
+            Signal::MachinePresent => Scope::PartStatus(Level::Machine),
+            Signal::RepoPresent => Scope::PartStatus(Level::Repo),
+            Signal::RepoFileHere => Scope::PartFile,
+            Signal::AdrFolder => Scope::RepositoryPaths(AuditList::AdrFolder),
+            Signal::ClaudeSetUp => Scope::RepositoryPaths(AuditList::ClaudeSetUp),
+            Signal::CiPresent => Scope::RepositoryPaths(AuditList::CiPresent),
+            Signal::LanguageSupported | Signal::Dep(_) => Scope::Repository,
+        }
+    }
+
     /// The names of the signals without a prefix, in vocabulary order.
     pub const PLAIN: [(&'static str, Signal); 7] = [
         ("machine_present", Signal::MachinePresent),
@@ -624,15 +700,10 @@ impl Manifest {
         for rule in &self.recommend {
             check_template(&rule.reason, &[]).map_err(bad)?;
             for c in &rule.when {
-                let (needed, label) = match c.signal {
-                    Signal::MachinePresent => (status_at(self.machine()), "machine"),
-                    Signal::RepoPresent => (status_at(self.repo_level()), "repo_level"),
-                    Signal::AdrFolder
-                    | Signal::ClaudeSetUp
-                    | Signal::CiPresent
-                    | Signal::LanguageSupported
-                    | Signal::RepoFileHere
-                    | Signal::Dep(_) => continue,
+                let (needed, label) = match c.signal.scope() {
+                    Scope::PartStatus(Level::Machine) => (status_at(self.machine()), "machine"),
+                    Scope::PartStatus(Level::Repo) => (status_at(self.repo_level()), "repo_level"),
+                    Scope::PartFile | Scope::RepositoryPaths(_) | Scope::Repository => continue,
                 };
                 if !needed {
                     return Err(bad(format!(

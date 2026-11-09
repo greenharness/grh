@@ -329,7 +329,7 @@ pub fn same_scope(e: &Entry, part: &Part, level: Level, repo: Option<&Path>) -> 
 }
 
 pub fn listing(cat: &Catalog) -> String {
-    let mut out = String::from("name the parts to install (grh install <part>...), or install them all: grh install --all\nparts:\n");
+    let mut out = String::from("name the parts to install (grh install <part>...),\nor install them all: grh install --all\nparts:\n");
     for part in &cat.parts {
         out.push_str(&format!("  {:<11} {}\n", part.name(), part.summary()));
     }
