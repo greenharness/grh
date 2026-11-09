@@ -6,14 +6,15 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use crate::exit::Exit;
+use crate::fetch::sha256_hex;
 use crate::manifest::{AuditList, Manifest, Scope};
 use crate::ops::{text, Ui};
 
 const CATALOG: &str = include_str!("../catalog.toml");
 
-/// Deserialising runs `checked`: no path builds a `Catalog` that skipped it.
-#[derive(Debug, Deserialize)]
-#[serde(try_from = "RawCatalog")]
+/// Every path to a `Catalog` goes through `Catalog::parse_with`, which runs
+/// `checked`.
+#[derive(Debug)]
 pub struct Catalog {
     pub skills_repo: String,
     pub skills_version: String,
@@ -27,11 +28,11 @@ pub struct Catalog {
     pub foreign_markers: Vec<String>,
     /// ADR-0064's list of the parts: every edge points to an earlier entry.
     pub order: Vec<String>,
-    #[serde(rename = "part")]
     pub parts: Vec<Part>,
 }
 
-/// The catalog as the file spells it, before `Catalog::checked`.
+/// The catalog as the file spells it, before pins are resolved and
+/// `Catalog::checked` runs.
 #[derive(Deserialize)]
 struct RawCatalog {
     skills_repo: String,
@@ -43,26 +44,90 @@ struct RawCatalog {
     audit: AuditPaths,
     foreign_markers: Vec<String>,
     order: Vec<String>,
-    #[serde(rename = "part")]
+    #[serde(rename = "part", default)]
     parts: Vec<Part>,
+    #[serde(default)]
+    pinned: Vec<Pin>,
 }
 
-impl TryFrom<RawCatalog> for Catalog {
-    type Error = String;
+/// A part whose manifest lives in its own repository's release: the catalog
+/// holds where, and the sha256 of the bytes grh built in as its copy.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pin {
+    name: String,
+    /// `owner/name` on GitHub.
+    repo: String,
+    /// The release tag, which starts with `v`.
+    tag: String,
+    #[serde(default = "default_asset")]
+    asset: String,
+    sha256: String,
+}
 
-    fn try_from(raw: RawCatalog) -> Result<Catalog, String> {
-        Catalog {
-            skills_repo: raw.skills_repo,
-            skills_version: raw.skills_version,
-            skills_sha256: raw.skills_sha256,
-            retired_names: raw.retired_names,
-            audit: raw.audit,
-            foreign_markers: raw.foreign_markers,
-            order: raw.order,
-            parts: raw.parts,
+fn default_asset() -> String {
+    crate::manifest::FILE_NAME.to_string()
+}
+
+/// Pinned manifest copies built into grh by `build.rs`: `(name, bytes)`.
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/manifests.rs"));
+}
+
+impl Pin {
+    /// The part this pin stands for, from its copy: refused unless the copy
+    /// is the bytes pinned and a manifest for exactly this release.
+    fn resolve(&self, copies: &[(&str, &[u8])]) -> Result<Part, Exit> {
+        let refuse = |why: String| invalid(format!("pinned part {}: {why}", self.name));
+        let Some(version) = self.tag.strip_prefix('v') else {
+            return Err(refuse(format!(
+                "the tag {} does not start with v",
+                self.tag
+            )));
+        };
+        let Some((_, bytes)) = copies.iter().find(|(name, _)| *name == self.name) else {
+            return Err(refuse(format!(
+                "no copy manifests/{}.toml of {} from {} {}",
+                self.name, self.asset, self.repo, self.tag
+            )));
+        };
+        let got = sha256_hex(bytes);
+        if got != self.sha256 {
+            return Err(refuse(format!(
+                "manifests/{}.toml has sha256 {got}, the pin says {}",
+                self.name, self.sha256
+            )));
         }
-        .checked()
-        .map_err(|e| text(&e))
+        let part = std::str::from_utf8(bytes)
+            .map_err(|e| refuse(format!("the copy is not UTF-8: {e}")))
+            .and_then(|source| Manifest::parse(source).map_err(|e| refuse(text(&e))))?;
+        if part.name() != self.name {
+            return Err(refuse(format!("the copy names the part {}", part.name())));
+        }
+        if part.extension.version != version {
+            return Err(refuse(format!(
+                "the copy is version {}, the tag {} says {version}",
+                part.extension.version, self.tag
+            )));
+        }
+        if let Some(release) = part.release() {
+            if release.version != version {
+                return Err(refuse(format!(
+                    "its [tool.release] version is {}, the tag {} says {version}",
+                    release.version, self.tag
+                )));
+            }
+            if release.repo != self.repo {
+                return Err(refuse(format!(
+                    "its [tool.release] repo is {}, the pin says {}",
+                    release.repo, self.repo
+                )));
+            }
+        }
+        if !part.is_published() {
+            return Err(refuse("the copy says published = false".to_string()));
+        }
+        Ok(part)
     }
 }
 
@@ -99,33 +164,101 @@ fn invalid(msg: impl std::fmt::Display) -> Exit {
     Exit::Failed(format!("the catalog is invalid: {msg}"))
 }
 
+/// Every `*.toml` file of `dir` as `(file stem, bytes)`, sorted; a missing
+/// directory holds no copies.
+fn read_copies(dir: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    let mut copies = Vec::new();
+    for entry in entries {
+        let path = entry?.path();
+        let is_copy = path.extension().is_some_and(|x| x == "toml") && path.is_file();
+        let stem = path.file_stem().map(|s| s.to_string_lossy().into_owned());
+        if let (true, Some(stem)) = (is_copy, stem) {
+            copies.push((stem, std::fs::read(&path)?));
+        }
+    }
+    copies.sort();
+    Ok(copies)
+}
+
 impl Catalog {
     /// The compiled-in catalog, or the file `GRH_CATALOG` names (a test hook
     /// so the integration tests can pin their own fixture tarballs). A bad
     /// file is a failure, never a panic.
     pub fn load() -> Result<Catalog, Exit> {
         if let Some(path) = std::env::var_os("GRH_CATALOG").filter(|p| !p.is_empty()) {
-            let source = std::fs::read_to_string(&path).map_err(|e| {
+            let shown = path.to_string_lossy();
+            let source = std::fs::read_to_string(&path)
+                .map_err(|e| Exit::Failed(format!("GRH_CATALOG {shown} is not readable: {e}")))?;
+            let beside = std::path::Path::new(&path)
+                .parent()
+                .unwrap_or(std::path::Path::new("."))
+                .join("manifests");
+            let owned = read_copies(&beside).map_err(|e| {
                 Exit::Failed(format!(
-                    "GRH_CATALOG {} is not readable: {e}",
-                    path.to_string_lossy()
+                    "GRH_CATALOG {shown}: cannot read {}: {e}",
+                    beside.display()
                 ))
             })?;
-            return Catalog::parse(&source).map_err(|e| {
+            let copies: Vec<(&str, &[u8])> = owned
+                .iter()
+                .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+                .collect();
+            return Catalog::parse_with(&source, &copies).map_err(|e| {
                 Exit::Failed(format!(
-                    "GRH_CATALOG {} is not a valid catalog: {}",
-                    path.to_string_lossy(),
+                    "GRH_CATALOG {shown} is not a valid catalog: {}",
                     text(&e)
                 ))
             });
         }
-        Catalog::parse(CATALOG)
+        Catalog::parse_with(CATALOG, embedded::MANIFESTS)
             .map_err(|e| Exit::Failed(format!("catalog.toml is invalid: {}", text(&e))))
     }
 
-    /// Parse a catalog and refuse one `resolve` could not walk.
+    /// Parse a catalog with no pinned copies: a pin is refused for having none.
     pub fn parse(source: &str) -> Result<Catalog, Exit> {
-        toml::from_str(source).map_err(|e| Exit::Failed(e.to_string()))
+        Catalog::parse_with(source, &[])
+    }
+
+    /// Parse a catalog, resolve every pin into a part from its copy
+    /// (`(name, bytes)`), and only then run `checked`, so a pinned part is
+    /// checked as an inline one is.
+    pub fn parse_with(source: &str, copies: &[(&str, &[u8])]) -> Result<Catalog, Exit> {
+        let raw: RawCatalog = toml::from_str(source).map_err(|e| Exit::Failed(e.to_string()))?;
+        let mut parts = raw.parts;
+        let mut pinned_names: BTreeSet<&str> = BTreeSet::new();
+        for pin in &raw.pinned {
+            if !pinned_names.insert(&pin.name) {
+                return Err(invalid(format!("two pins name the part {}", pin.name)));
+            }
+            if parts.iter().any(|p| p.name() == pin.name) {
+                return Err(invalid(format!(
+                    "the part {} is both a [[part]] and a [[pinned]]",
+                    pin.name
+                )));
+            }
+            parts.push(pin.resolve(copies)?);
+        }
+        if let Some((name, _)) = copies.iter().find(|(name, _)| !pinned_names.contains(name)) {
+            return Err(invalid(format!(
+                "manifests/{name}.toml is a copy of no pinned part"
+            )));
+        }
+        Catalog {
+            skills_repo: raw.skills_repo,
+            skills_version: raw.skills_version,
+            skills_sha256: raw.skills_sha256,
+            retired_names: raw.retired_names,
+            audit: raw.audit,
+            foreign_markers: raw.foreign_markers,
+            order: raw.order,
+            parts,
+        }
+        .checked()
     }
 
     /// Every part is a valid manifest; names and aliases are unique; every
@@ -507,6 +640,159 @@ mod tests {
         }
     }
 
+    /// A copy of the part `lab`, version 1.2.0, with `extra` appended.
+    fn lab_copy(extra: &str) -> String {
+        format!("[extension]\nname = \"lab\"\nversion = \"1.2.0\"\nharness = \">=0.2\"\n{extra}")
+    }
+
+    /// A catalog where inline part `a` needs the pinned part `lab`, pinned at
+    /// `tag` from `repo` with the sha256 of `pinned_bytes`.
+    fn with_lab_pin(pinned_bytes: &str, tag: &str, repo: &str) -> String {
+        fixture(&["lab", "a"], &[("a", &["lab"], &[], &[])])
+            + &format!(
+                "[[pinned]]\nname = \"lab\"\nrepo = \"{repo}\"\ntag = \"{tag}\"\nsha256 = \"{}\"\n",
+                sha256_hex(pinned_bytes.as_bytes())
+            )
+    }
+
+    fn refused_with(source: &str, copies: &[(&str, &str)], mentions: &[&str]) {
+        let copies: Vec<(&str, &[u8])> = copies.iter().map(|(n, b)| (*n, b.as_bytes())).collect();
+        let message = match Catalog::parse_with(source, &copies) {
+            Ok(_) => panic!("the catalog was accepted:\n{source}"),
+            Err(e) => text(&e),
+        };
+        for word in mentions {
+            assert!(message.contains(word), "{message:?} does not name {word}");
+        }
+    }
+
+    const TOOL: &str = "[tool]\nbin = \"lab\"\n[tool.release]\nrepo = \"o/lab\"\nversion = \"1.2.0\"\n[tool.release.sha256]\nx86_64-unknown-linux-gnu = \"00\"\n";
+
+    #[test]
+    fn a_pinned_part_resolves_and_takes_part_in_order_and_needs() {
+        let copy = lab_copy("");
+        let source = with_lab_pin(&copy, "v1.2.0", "o/lab");
+        let c = Catalog::parse_with(&source, &[("lab", copy.as_bytes())]).unwrap();
+        assert!(c.part("lab").is_some());
+        assert_eq!(c.order, ["lab", "a"]);
+        let resolved: Vec<&str> = c
+            .resolve(&args(&["a"]))
+            .unwrap()
+            .iter()
+            .map(|p| p.name())
+            .collect();
+        assert_eq!(resolved, ["lab", "a"]);
+    }
+
+    #[test]
+    fn a_pinned_part_with_a_tool_of_this_release_resolves() {
+        let copy = lab_copy(TOOL);
+        let source = with_lab_pin(&copy, "v1.2.0", "o/lab");
+        assert!(Catalog::parse_with(&source, &[("lab", copy.as_bytes())]).is_ok());
+    }
+
+    #[test]
+    fn each_pin_refusal_names_the_part_and_why() {
+        let copy = lab_copy("");
+        // no copy, on the embedded and the sibling path alike: parse_with
+        // takes whatever copies the caller found
+        refused_with(
+            &with_lab_pin(&copy, "v1.2.0", "o/lab"),
+            &[],
+            &["lab", "no copy"],
+        );
+        refused(&with_lab_pin(&copy, "v1.2.0", "o/lab"), &["lab", "no copy"]);
+        // the copy is not the pinned bytes
+        let other = lab_copy("summary = \"changed\"\n");
+        refused_with(
+            &with_lab_pin(&copy, "v1.2.0", "o/lab"),
+            &[("lab", &other)],
+            &[
+                "lab",
+                "sha256",
+                &sha256_hex(other.as_bytes()),
+                &sha256_hex(copy.as_bytes()),
+            ],
+        );
+        // a tag without v
+        refused_with(
+            &with_lab_pin(&copy, "1.2.0", "o/lab"),
+            &[("lab", &copy)],
+            &["lab", "does not start with v"],
+        );
+        // not a manifest
+        let junk = "not = [toml";
+        refused_with(
+            &with_lab_pin(junk, "v1.2.0", "o/lab"),
+            &[("lab", junk)],
+            &["lab"],
+        );
+        // the copy names another part
+        let renamed = copy.replace("name = \"lab\"", "name = \"other\"");
+        refused_with(
+            &with_lab_pin(&renamed, "v1.2.0", "o/lab"),
+            &[("lab", &renamed)],
+            &["lab", "names the part other"],
+        );
+        // [extension] version is not the tag
+        refused_with(
+            &with_lab_pin(&copy, "v1.3.0", "o/lab"),
+            &[("lab", &copy)],
+            &["lab", "version 1.2.0", "1.3.0"],
+        );
+        // [tool.release] version or repo differs
+        let tool_old = lab_copy(&TOOL.replace("version = \"1.2.0\"", "version = \"1.1.0\""));
+        refused_with(
+            &with_lab_pin(&tool_old, "v1.2.0", "o/lab"),
+            &[("lab", &tool_old)],
+            &["lab", "[tool.release] version is 1.1.0"],
+        );
+        let tool = lab_copy(TOOL);
+        refused_with(
+            &with_lab_pin(&tool, "v1.2.0", "o/elsewhere"),
+            &[("lab", &tool)],
+            &["lab", "[tool.release] repo is o/lab"],
+        );
+        // published = false
+        let hidden = lab_copy("published = false\n");
+        refused_with(
+            &with_lab_pin(&hidden, "v1.2.0", "o/lab"),
+            &[("lab", &hidden)],
+            &["lab", "published = false"],
+        );
+        // a copy with no pin
+        refused_with(
+            &fixture(&["a"], &[("a", &[], &[], &[])]),
+            &[("stray", "x")],
+            &["manifests/stray.toml", "no pinned part"],
+        );
+        // a name both inline and pinned
+        let both = fixture(&["lab"], &[("lab", &[], &[], &[])])
+            + &format!(
+                "[[pinned]]\nname = \"lab\"\nrepo = \"o/lab\"\ntag = \"v1.2.0\"\nsha256 = \"{}\"\n",
+                sha256_hex(copy.as_bytes())
+            );
+        refused_with(
+            &both,
+            &[("lab", &copy)],
+            &["lab", "both a [[part]] and a [[pinned]]"],
+        );
+        // two pins with one name
+        let twice = with_lab_pin(&copy, "v1.2.0", "o/lab")
+            + &format!(
+                "[[pinned]]\nname = \"lab\"\nrepo = \"o/lab\"\ntag = \"v1.2.0\"\nsha256 = \"{}\"\n",
+                sha256_hex(copy.as_bytes())
+            );
+        refused_with(&twice, &[("lab", &copy)], &["two pins name the part lab"]);
+        // an alias that clashes with an inline part's name
+        let aliased = lab_copy("aliases = [\"a\"]\n");
+        refused_with(
+            &with_lab_pin(&aliased, "v1.2.0", "o/lab"),
+            &[("lab", &aliased)],
+            &["a"],
+        );
+    }
+
     #[test]
     fn a_part_that_is_not_experimental_may_not_need_an_experimental_one() {
         let source = fixture(
@@ -557,7 +843,7 @@ mod tests {
             &["a", "b"],
             &[("a", &["b"], &[], &[]), ("b", &[], &[], &[])],
         );
-        let error = toml::from_str::<Catalog>(&source).unwrap_err().to_string();
+        let error = text(&Catalog::parse(&source).unwrap_err());
         assert!(error.contains("at or after it in order"), "{error}");
     }
 

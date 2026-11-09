@@ -1642,3 +1642,37 @@ fn audit_reads_the_gate_state_from_the_catalog_query() {
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_ne!(v["parts"][0]["verdict"], "already here", "{v}");
 }
+
+#[test]
+fn a_pinned_part_installs_from_a_fixture_release_beside_gh_catalog() {
+    let fx = Fx::new();
+    git_init(&fx);
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/pinned");
+    let pinned_copy = fs::read(fixture.join("manifests/pinned-demo.toml")).unwrap();
+    put(
+        &fx.p("pin/catalog.toml"),
+        &fs::read(fixture.join("catalog.toml")).unwrap(),
+    );
+    put(&fx.p("pin/manifests/pinned-demo.toml"), &pinned_copy);
+    put(
+        &fx.p("rel/fixture/pinned-demo/releases/download/v1.0.0/greenharness.toml"),
+        &pinned_copy,
+    );
+    let catalog = fx.p("pin/catalog.toml").to_string_lossy().into_owned();
+    let envs = [("GRH_CATALOG", catalog.as_str())];
+    let o = fx.grh(
+        "work",
+        &envs,
+        &["install", "pinned-demo", "--repo", "--yes"],
+    );
+    assert_eq!(code(&o), 0, "{}", err(&o));
+    assert_eq!(
+        fs::read_to_string(fx.p("work/.github/workflows/pinned-demo.yml")).unwrap(),
+        "name: pinned-demo\n"
+    );
+
+    fs::write(fx.p("pin/manifests/pinned-demo.toml"), b"[extension]\n").unwrap();
+    let o = fx.grh("work", &envs, &["status"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert!(err(&o).contains("pinned-demo"), "{}", err(&o));
+}

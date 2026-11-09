@@ -135,7 +135,7 @@ sees. It closes build step 2 (grh goes generic).
 
 ## Phases
 
-- [ ] Phase 1 — the pinned form: `[[pinned]]` in the raw catalog,
+- [x] Phase 1 — the pinned form: `[[pinned]]` in the raw catalog,
   `Catalog::parse_with` resolving pins before `checked()`, the embedded
   copies, the load-time checks, `GRH_CATALOG`'s sibling `manifests/`:
   `build.rs`, `Cargo.toml` (build script), `.gitattributes`,
