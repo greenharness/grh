@@ -1,6 +1,6 @@
 //! Embeds the pinned manifest copies: writes `OUT_DIR/manifests.rs`, the
-//! sorted `(name, bytes)` of every `manifests/*.toml`. A missing `manifests/`
-//! directory holds no copies.
+//! sorted `(name, bytes)` of every `manifests/*.toml`. A `manifests/` that does
+//! not exist holds no copies; any other read error fails the build.
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
@@ -10,14 +10,21 @@ fn main() {
     println!("cargo:rerun-if-changed=manifests");
     let root = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut copies: Vec<(String, PathBuf)> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(root.join("manifests")) {
-        for entry in entries {
-            let path = entry.expect("a readable manifests/ entry").path();
-            if path.extension().is_some_and(|x| x == "toml") && path.is_file() {
-                let name = path.file_stem().expect("a file stem").to_string_lossy();
-                copies.push((name.into_owned(), path));
+    let dir = root.join("manifests");
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let path = entry
+                    .unwrap_or_else(|e| panic!("cannot read an entry of {}: {e}", dir.display()))
+                    .path();
+                if path.extension().is_some_and(|x| x == "toml") && path.is_file() {
+                    let name = path.file_stem().expect("a file stem").to_string_lossy();
+                    copies.push((name.into_owned(), path));
+                }
             }
         }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => panic!("cannot read {}: {e}", dir.display()),
     }
     copies.sort();
     let mut out = String::from("pub const MANIFESTS: &[(&str, &[u8])] = &[\n");

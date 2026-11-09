@@ -2,15 +2,15 @@
 //! shipped catalog. A thin argv and exit wrapper over `grh::pins`.
 
 use std::io::Write;
-use std::path::Path;
 use std::process::ExitCode;
 
+use grh::catalog::catalog_location;
 use grh::manifest::FILE_NAME;
-use grh::pins::{check, check_exit_code, pin, Existing};
+use grh::pins::{check, check_exit_code, is_part_name, pin, Existing};
 
 const USAGE: &str = "usage: pins pin [--replace] <name> <repo> <tag> [asset]
        pins check
-       pins -h
+       pins -h | --help
 
 pin    download the release asset (default greenharness.toml), check it as the
        catalog does, write manifests/<name>.toml and print the [[pinned]] block.
@@ -50,7 +50,24 @@ fn emit(out: &str, code: ExitCode) -> Result<(), ExitCode> {
     }
 }
 
+fn help() -> ExitCode {
+    match emit(&format!("{USAGE}\n"), ExitCode::SUCCESS) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(code) => code,
+    }
+}
+
+/// True when `-h` or `--help` appears before any `--`.
+fn asks_for_help(args: &[String]) -> bool {
+    args.iter()
+        .take_while(|arg| *arg != "--")
+        .any(|arg| arg == "-h" || arg == "--help")
+}
+
 fn run_pin(args: &[String]) -> ExitCode {
+    if asks_for_help(args) {
+        return help();
+    }
     let mut replace = false;
     let mut operands = Vec::new();
     let mut options_ended = false;
@@ -69,12 +86,17 @@ fn run_pin(args: &[String]) -> ExitCode {
         [name, repo, tag, asset] => (name, repo, tag, *asset),
         _ => return usage_error("pin takes <name> <repo> <tag> [asset]"),
     };
+    if !is_part_name(name) {
+        return usage_error(&format!(
+            "{name:?} is not a part name (letters, digits, - and _)"
+        ));
+    }
     let existing = if replace {
         Existing::Replace
     } else {
         Existing::Keep
     };
-    let copies = Path::new(env!("CARGO_MANIFEST_DIR")).join("manifests");
+    let copies = catalog_location().copies_dir().to_path_buf();
     match pin(&copies, name, repo, tag, asset, existing) {
         Ok(block) => match emit(&block, ExitCode::SUCCESS) {
             Ok(()) => ExitCode::SUCCESS,
@@ -88,16 +110,14 @@ fn run_pin(args: &[String]) -> ExitCode {
 }
 
 fn run_check(args: &[String]) -> ExitCode {
+    if asks_for_help(args) {
+        return help();
+    }
     if let Some(extra) = args.first() {
         return usage_error(&format!("check takes no argument, got {extra}"));
     }
-    // The catalog grh would load: `GRH_CATALOG` and the `manifests/` beside
-    // it when set, else this repository's own.
-    let catalog = std::env::var_os("GRH_CATALOG")
-        .filter(|path| !path.is_empty())
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog.toml"));
-    let root = catalog.parent().unwrap_or(Path::new(".")).to_path_buf();
+    let location = catalog_location();
+    let catalog = location.file().to_path_buf();
     let source = match std::fs::read_to_string(&catalog) {
         Ok(source) => source,
         Err(e) => {
@@ -105,7 +125,7 @@ fn run_check(args: &[String]) -> ExitCode {
             return ExitCode::from(1);
         }
     };
-    let results = match check(&source, &root.join("manifests")) {
+    let results = match check(&source, location.copies_dir()) {
         Ok(results) => results,
         Err(exit) => {
             eprintln!("pins: {}", grh::ops::text(&exit));
@@ -128,15 +148,10 @@ fn run_check(args: &[String]) -> ExitCode {
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.iter().any(|a| a == "-h" || a == "--help") {
-        return match emit(&format!("{USAGE}\n"), ExitCode::SUCCESS) {
-            Ok(()) => ExitCode::SUCCESS,
-            Err(code) => code,
-        };
-    }
     match args.split_first() {
         Some((verb, rest)) if verb == "pin" => run_pin(rest),
         Some((verb, rest)) if verb == "check" => run_check(rest),
+        Some(_) if asks_for_help(&args) => help(),
         Some((other, _)) if other.starts_with('-') => {
             usage_error(&format!("unknown option {other}"))
         }

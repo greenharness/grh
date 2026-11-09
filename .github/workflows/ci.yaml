@@ -61,6 +61,7 @@ jobs:
   pinned-manifests:
     name: pinned manifests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
     steps:
@@ -74,7 +75,7 @@ jobs:
           cargo run --locked --example pins -- check
           code=$?
           set -e
-          if [ "$code" = 3 ] && [ "${{ github.event_name }}" = pull_request ]; then
+          if [ "$code" = 3 ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then
             echo "::warning::a pinned manifest's host was unreachable; not a failure on a pull request"
             exit 0
           fi

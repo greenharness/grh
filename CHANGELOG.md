@@ -13,6 +13,12 @@ section is missing here.
   No part is pinned yet, so grh behaves as 0.4.0. Maintainers pin a release
   with `cargo run --example pins -- pin`, and CI re-checks every pin.
 
+### Changed
+
+- **`Catalog` no longer implements `Deserialize`.** Build a catalog with
+  `Catalog::parse` or `Catalog::parse_with`, which resolve pins and run the
+  catalog's checks.
+
 ## v0.4.0
 
 ### Added

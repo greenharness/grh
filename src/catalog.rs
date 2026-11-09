@@ -95,7 +95,7 @@ impl Pin {
             return Err(format!("the tag {} does not start with v", self.tag));
         };
         let got = sha256_hex(bytes);
-        if got != self.sha256 {
+        if !got.eq_ignore_ascii_case(&self.sha256) {
             return Err(format!(
                 "manifests/{}.toml has sha256 {got}, the pin says {}",
                 self.name, self.sha256
@@ -169,7 +169,7 @@ fn invalid(msg: impl std::fmt::Display) -> Exit {
 
 /// Every `*.toml` file of `dir` as `(file stem, bytes)`, sorted; a missing
 /// directory holds no copies.
-fn read_copies(dir: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
+pub(crate) fn read_copies(dir: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -188,38 +188,91 @@ fn read_copies(dir: &std::path::Path) -> std::io::Result<Vec<(String, Vec<u8>)>>
     Ok(copies)
 }
 
+/// Where the catalog grh loads lives.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CatalogLocation {
+    /// The file `GRH_CATALOG` names, and the `manifests/` beside it.
+    Named {
+        file: std::path::PathBuf,
+        copies_dir: std::path::PathBuf,
+    },
+    /// This repository's own `catalog.toml` and `manifests/`, the ones built
+    /// into grh.
+    Repository {
+        file: std::path::PathBuf,
+        copies_dir: std::path::PathBuf,
+    },
+}
+
+impl CatalogLocation {
+    pub fn file(&self) -> &std::path::Path {
+        match self {
+            CatalogLocation::Named { file, .. } | CatalogLocation::Repository { file, .. } => file,
+        }
+    }
+
+    pub fn copies_dir(&self) -> &std::path::Path {
+        match self {
+            CatalogLocation::Named { copies_dir, .. }
+            | CatalogLocation::Repository { copies_dir, .. } => copies_dir,
+        }
+    }
+}
+
+fn copies_beside(file: &std::path::Path) -> std::path::PathBuf {
+    file.parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("manifests")
+}
+
+/// The file `GRH_CATALOG` names and the `manifests/` beside it, else this
+/// repository's own `catalog.toml` and `manifests/`.
+pub fn catalog_location() -> CatalogLocation {
+    match std::env::var_os("GRH_CATALOG").filter(|path| !path.is_empty()) {
+        Some(named) => {
+            let file = std::path::PathBuf::from(named);
+            let copies_dir = copies_beside(&file);
+            CatalogLocation::Named { file, copies_dir }
+        }
+        None => {
+            let file = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("catalog.toml");
+            let copies_dir = copies_beside(&file);
+            CatalogLocation::Repository { file, copies_dir }
+        }
+    }
+}
+
 impl Catalog {
     /// The compiled-in catalog, or the file `GRH_CATALOG` names (a test hook
     /// so the integration tests can pin their own fixture tarballs). A bad
     /// file is a failure, never a panic.
     pub fn load() -> Result<Catalog, Exit> {
-        if let Some(path) = std::env::var_os("GRH_CATALOG").filter(|p| !p.is_empty()) {
-            let shown = path.to_string_lossy();
-            let source = std::fs::read_to_string(&path)
-                .map_err(|e| Exit::Failed(format!("GRH_CATALOG {shown} is not readable: {e}")))?;
-            let beside = std::path::Path::new(&path)
-                .parent()
-                .unwrap_or(std::path::Path::new("."))
-                .join("manifests");
-            let owned = read_copies(&beside).map_err(|e| {
-                Exit::Failed(format!(
-                    "GRH_CATALOG {shown}: cannot read {}: {e}",
-                    beside.display()
-                ))
-            })?;
-            let copies: Vec<(&str, &[u8])> = owned
-                .iter()
-                .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
-                .collect();
-            return Catalog::parse_with(&source, &copies).map_err(|e| {
-                Exit::Failed(format!(
-                    "GRH_CATALOG {shown} is not a valid catalog: {}",
-                    text(&e)
-                ))
-            });
-        }
-        Catalog::parse_with(CATALOG, embedded::MANIFESTS)
-            .map_err(|e| Exit::Failed(format!("catalog.toml is invalid: {}", text(&e))))
+        let location = match catalog_location() {
+            CatalogLocation::Repository { .. } => {
+                return Catalog::parse_with(CATALOG, embedded::MANIFESTS)
+                    .map_err(|e| Exit::Failed(format!("catalog.toml is invalid: {}", text(&e))));
+            }
+            named @ CatalogLocation::Named { .. } => named,
+        };
+        let shown = location.file().display();
+        let source = std::fs::read_to_string(location.file())
+            .map_err(|e| Exit::Failed(format!("GRH_CATALOG {shown} is not readable: {e}")))?;
+        let owned = read_copies(location.copies_dir()).map_err(|e| {
+            Exit::Failed(format!(
+                "GRH_CATALOG {shown}: cannot read {}: {e}",
+                location.copies_dir().display()
+            ))
+        })?;
+        let copies: Vec<(&str, &[u8])> = owned
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect();
+        Catalog::parse_with(&source, &copies).map_err(|e| {
+            Exit::Failed(format!(
+                "GRH_CATALOG {shown} is not a valid catalog: {}",
+                text(&e)
+            ))
+        })
     }
 
     /// Parse a catalog with no pinned copies: a pin is refused for having none.
@@ -675,10 +728,10 @@ mod tests {
     fn a_pinned_part_resolves_and_takes_part_in_order_and_needs() {
         let copy = lab_copy("");
         let source = with_lab_pin(&copy, "v1.2.0", "o/lab");
-        let c = Catalog::parse_with(&source, &[("lab", copy.as_bytes())]).unwrap();
-        assert!(c.part("lab").is_some());
-        assert_eq!(c.order, ["lab", "a"]);
-        let resolved: Vec<&str> = c
+        let catalog = Catalog::parse_with(&source, &[("lab", copy.as_bytes())]).unwrap();
+        assert!(catalog.part("lab").is_some());
+        assert_eq!(catalog.order, ["lab", "a"]);
+        let resolved: Vec<&str> = catalog
             .resolve(&args(&["a"]))
             .unwrap()
             .iter()
@@ -824,11 +877,11 @@ mod tests {
 
     #[test]
     fn the_shipped_catalog_passes_checked_and_every_edge_points_down_order() {
-        let c = Catalog::load().unwrap();
-        let rank = |n: &str| c.order.iter().position(|o| o == n).unwrap();
-        for p in &c.parts {
+        let catalog = Catalog::load().unwrap();
+        let rank = |n: &str| catalog.order.iter().position(|o| o == n).unwrap();
+        for p in &catalog.parts {
             for edge in p.needs().iter().chain(p.enhances()) {
-                let target = c.part(edge).unwrap();
+                let target = catalog.part(edge).unwrap();
                 assert!(
                     rank(target.name()) < rank(p.name()),
                     "{} -> {edge}",
@@ -836,8 +889,20 @@ mod tests {
                 );
             }
         }
-        assert_eq!(c.part("gate").unwrap().name(), "greengate");
-        assert_eq!(c.part("guardrails").unwrap().name(), "greenpiste");
+        assert_eq!(catalog.part("gate").unwrap().name(), "greengate");
+        assert_eq!(catalog.part("guardrails").unwrap().name(), "greenpiste");
+    }
+
+    #[test]
+    fn the_embedded_manifests_are_the_copies_in_the_repository() {
+        let on_disk =
+            read_copies(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("manifests"))
+                .unwrap();
+        let on_disk: Vec<(&str, &[u8])> = on_disk
+            .iter()
+            .map(|(name, bytes)| (name.as_str(), bytes.as_slice()))
+            .collect();
+        assert_eq!(embedded::MANIFESTS, on_disk.as_slice());
     }
 
     #[test]
@@ -852,18 +917,21 @@ mod tests {
 
     #[test]
     fn every_need_names_a_part_and_no_retired_name_collides_with_one() {
-        let c = Catalog::load().unwrap();
-        for p in &c.parts {
+        let catalog = Catalog::load().unwrap();
+        for p in &catalog.parts {
             for n in p.needs() {
-                assert!(c.part(n).is_some(), "{} needs unknown {n}", p.name());
+                assert!(catalog.part(n).is_some(), "{} needs unknown {n}", p.name());
             }
         }
-        assert!(!c.retired_names.is_empty());
-        for (name, members) in &c.retired_names {
-            assert!(c.part(name).is_none(), "retired name {name} shadows a part");
+        assert!(!catalog.retired_names.is_empty());
+        for (name, members) in &catalog.retired_names {
+            assert!(
+                catalog.part(name).is_none(),
+                "retired name {name} shadows a part"
+            );
             for m in members {
                 assert!(
-                    c.part(m).is_some_and(Part::is_published),
+                    catalog.part(m).is_some_and(Part::is_published),
                     "retired name {name} lists {m}, which is not a published part"
                 );
             }
@@ -872,8 +940,8 @@ mod tests {
 
     #[test]
     fn a_binary_part_pins_every_unix_target() {
-        let c = Catalog::load().unwrap();
-        for p in c.parts.iter().filter(|p| p.bin().is_some()) {
+        let catalog = Catalog::load().unwrap();
+        for p in catalog.parts.iter().filter(|p| p.bin().is_some()) {
             let release = p
                 .release()
                 .unwrap_or_else(|| panic!("{} has no release", p.name()));
@@ -908,19 +976,21 @@ mod tests {
 
     #[test]
     fn the_retired_notice_names_the_former_members_and_the_verb() {
-        let c = Catalog::load().unwrap();
-        let notice = c.retired_notice(&args(&["solo"]), Verb::Install).unwrap();
+        let catalog = Catalog::load().unwrap();
+        let notice = catalog
+            .retired_notice(&args(&["solo"]), Verb::Install)
+            .unwrap();
         assert_eq!(
             notice,
             "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenpiste\n  or every part but the experiments: grh install --all"
         );
-        let notice = c
+        let notice = catalog
             .retired_notice(&args(&["greengate", "solo"]), Verb::Uninstall)
             .unwrap();
         assert!(
             notice.ends_with("to remove what solo installed: grh uninstall greengate greenpiste")
         );
-        assert!(c
+        assert!(catalog
             .retired_notice(&args(&["greengate"]), Verb::Install)
             .is_none());
     }
@@ -929,35 +999,38 @@ mod tests {
     fn all_names_leave_out_an_unpublished_part() {
         let source = fixture(&["a", "b"], &[("a", &[], &[], &[]), ("b", &[], &[], &[])])
             .replace("name = \"b\"\n", "name = \"b\"\npublished = false\n");
-        let c = Catalog::parse(&source).unwrap();
-        assert_eq!(c.all_names(), ["a"]);
+        let catalog = Catalog::parse(&source).unwrap();
+        assert_eq!(catalog.all_names(), ["a"]);
     }
 
     #[test]
     fn dependencies_are_added_before_what_needs_them() {
-        let c = Catalog::load().unwrap();
+        let catalog = Catalog::load().unwrap();
         assert_eq!(
-            names(&c.resolve(&args(&["conform"])).unwrap()),
+            names(&catalog.resolve(&args(&["conform"])).unwrap()),
             ["decisions", "conform"]
         );
         assert_eq!(
-            names(&c.resolve(&args(&["attest"])).unwrap()),
+            names(&catalog.resolve(&args(&["attest"])).unwrap()),
             ["greengate", "attest"]
         );
         assert_eq!(
-            names(&c.resolve(&args(&["workflow"])).unwrap()),
+            names(&catalog.resolve(&args(&["workflow"])).unwrap()),
             ["greengate", "greenpiste", "workflow"]
         );
     }
 
     #[test]
     fn resolving_a_part_returns_it_and_its_needs_only() {
-        let c = Catalog::load().unwrap();
+        let catalog = Catalog::load().unwrap();
         assert_eq!(
-            names(&c.resolve(&args(&["greengate"])).unwrap()),
+            names(&catalog.resolve(&args(&["greengate"])).unwrap()),
             ["greengate"]
         );
-        assert_eq!(names(&c.resolve(&args(&["gate"])).unwrap()), ["greengate"]);
+        assert_eq!(
+            names(&catalog.resolve(&args(&["gate"])).unwrap()),
+            ["greengate"]
+        );
     }
 
     #[test]
@@ -966,28 +1039,28 @@ mod tests {
             &["a", "b"],
             &[("a", &[], &[], &[]), ("b", &[], &["a"], &[])],
         );
-        let c = Catalog::parse(&source).unwrap();
-        assert_eq!(names(&c.resolve(&args(&["b"])).unwrap()), ["b"]);
+        let catalog = Catalog::parse(&source).unwrap();
+        assert_eq!(names(&catalog.resolve(&args(&["b"])).unwrap()), ["b"]);
     }
 
     #[test]
     fn an_unknown_name_is_refused() {
-        let c = Catalog::load().unwrap();
+        let catalog = Catalog::load().unwrap();
         assert_eq!(
-            c.resolve(&args(&["gate", "nope"])).unwrap_err(),
+            catalog.resolve(&args(&["gate", "nope"])).unwrap_err(),
             Unknown::Name("nope".into())
         );
     }
 
     #[test]
     fn dependents_are_the_installed_parts_that_need_it() {
-        let c = Catalog::load().unwrap();
+        let catalog = Catalog::load().unwrap();
         let installed: BTreeSet<String> = ["decisions", "conform", "greengate"]
             .map(String::from)
             .into();
-        assert_eq!(c.dependents("decisions", &installed), ["conform"]);
-        assert!(c.dependents("greengate", &installed).is_empty());
-        assert!(c.dependents("gate", &installed).is_empty());
+        assert_eq!(catalog.dependents("decisions", &installed), ["conform"]);
+        assert!(catalog.dependents("greengate", &installed).is_empty());
+        assert!(catalog.dependents("gate", &installed).is_empty());
     }
 
     #[test]
