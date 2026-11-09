@@ -5,6 +5,36 @@ section is missing here.
 
 ## Unreleased
 
+## v0.4.0
+
+### Added
+
+- **A bare `grh install` opens a checklist** on a terminal (stdin, stdout and
+  stderr all terminals, `TERM` not `dumb`), pre-ticked with what `grh audit`
+  recommends, plus a line to also set up this repository. `enter` prints the
+  equivalent `grh install …` command, then the usual plan and
+  `Proceed? [y/N]`. Off a terminal, or on one under 8 rows or 40 columns,
+  it lists the parts and exits 2 as before.
+- **Experimental parts.** `[extension] experimental = true` (needs
+  `harness = ">=0.4"`) marks a part as an experiment: never pre-ticked, left
+  out of `grh install --all` and of audit's install line (its row keeps its
+  verdict; `--json` lists it under `experimental`). It installs by name or
+  ticked. router (relais) is the first.
+- Exit codes 129 and 143: the terminal hung up, or grh was terminated, while
+  the checklist was open.
+
+### Changed
+
+- **`grh install --all` no longer installs router**; it names what it left
+  out. Install it with `grh install router`.
+- **grh answers to harness 0.4.** A manifest whose requirement excludes 0.4
+  (`harness = "^0.3"` or `"0.3"`) is now refused; `>=0.3` still matches. A
+  part may not need an experimental one.
+- Audit's warnings for a status query with no answer and a failing
+  `git config --get` name the command to run.
+
+To go back: `GRH_VERSION=v0.3.0 sh install.sh`; receipts are unchanged.
+
 ## v0.3.0
 
 ### Changed

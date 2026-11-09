@@ -135,8 +135,8 @@ main() {
     esac
     printf '  Nothing else is installed yet. Next:\n\n'
     printf '    grh audit                          # what fits this repository\n'
-    printf '    grh install greengate greenpiste   # name the parts you want\n'
-    printf '    grh install --all --repo           # or every part, and this repository\n\n'
+    printf '    grh install                        # pick the parts in a checklist\n'
+    printf '    grh install greengate greenpiste   # or name them\n\n'
 }
 
 main "$@"

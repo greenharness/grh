@@ -119,13 +119,19 @@ impl Checklist {
                 } else {
                     Availability::Open
                 };
+                // Audit's reason for a part it recommends, and for one it
+                // finds already set up here, so an unticked line that is
+                // already in place says so.
                 let reason = assessment.and_then(|found| {
-                    found
-                        .rows
-                        .iter()
-                        .find(|row| row.part == part.name() && row.verdict == Verdict::Recommend)
-                        .map(|row| row.reason.clone())
-                        .filter(|reason| !reason.is_empty())
+                    let row = found.rows.iter().find(|row| row.part == part.name())?;
+                    match row.verdict {
+                        Verdict::Recommend => Some(row.reason.clone()),
+                        Verdict::AlreadyHere => {
+                            Some(format!("{}: {}", row.verdict.as_str(), row.reason))
+                        }
+                        Verdict::NotUseful => None,
+                    }
+                    .filter(|reason| !reason.is_empty())
                 });
                 PartLine {
                     name: part.name().to_string(),
@@ -832,6 +838,35 @@ order = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]
         let alpha = rows.iter().find(|r| r.contains("alpha")).unwrap();
         assert!(
             alpha.contains("[x]") && alpha.contains("a git repository"),
+            "{rows:#?}"
+        );
+    }
+
+    #[test]
+    fn a_line_already_set_up_here_says_so_and_stays_unticked() {
+        let cat = catalog();
+        let found = Assessment {
+            root: std::path::PathBuf::from("."),
+            languages: Default::default(),
+            rows: vec![crate::audit::Row {
+                part: cat.part("alpha").unwrap().name(),
+                verdict: Verdict::AlreadyHere,
+                reason: "its hooks are installed here".to_string(),
+            }],
+            hooks: Vec::new(),
+            warnings: Vec::new(),
+            adr_folder: None,
+            ci: Vec::new(),
+            signals: Default::default(),
+            install: Vec::new(),
+            experimental: cat.experimental_names(),
+        };
+        let checklist = Checklist::new(&cat, Some(&found), &[]);
+        let rows = screen(&checklist, 100, 24, false);
+        let alpha = rows.iter().find(|r| r.contains("alpha")).unwrap();
+        assert!(alpha.contains("[ ]"), "{rows:#?}");
+        assert!(
+            alpha.contains("already here: its hooks are installed here"),
             "{rows:#?}"
         );
     }
