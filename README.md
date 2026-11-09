@@ -5,7 +5,7 @@ One command to install, audit and remove the Green Harness parts.
 ```sh
 curl -fsSL https://raw.githubusercontent.com/greenharness/grh/main/install/install.sh | sh
 grh audit                # what fits this repository
-grh install solo         # gate + guardrails
+grh install solo         # greengate + greenpiste
 grh install team --repo  # + decisions and conform, and arm this repository
 grh uninstall            # take every part back out
 ```
@@ -20,16 +20,22 @@ when stdin is not a terminal).
 | Part | Tool | What it decides |
 |---|---|---|
 | decisions | aval | what is decided: architecture decision records, resolved |
-| gate | amont | what a commit or a push may carry: git hooks |
-| guardrails | amont-agent | what an agent's tool call may do: a Claude Code hook |
+| greengate (was gate) | amont | what a commit or a push may carry: git hooks |
+| greenpiste (was guardrails) | amont-agent | what an agent's tool call may do: a Claude Code hook |
 | router | relais | which model runs a bounded task, verified and accounted |
 | conform | adr-lint | which decided code rules a tree breaks, by lint (needs decisions) |
-| attest | git-attest | CI skips what your laptop already checked (needs gate) |
-| workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs guardrails and gate) |
+| attest | git-attest | CI skips what your laptop already checked (needs greengate) |
+| workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs greenpiste and greengate) |
 | design | Duro | the Duro design system, themed by your tokens (extension, not published yet) |
 
-Profiles: **solo** (gate, guardrails), **team** (solo + decisions, conform),
-**full** (team + router). workflow and design are opt-in.
+Profiles: **solo** (greengate, greenpiste), **team** (solo + decisions,
+conform), **full** (team + router). workflow and design are opt-in. The old
+names `gate` and `guardrails` still work, with a warning.
+
+Every part is described by a manifest, `greenharness.toml` v2
+([docs/extension-manifest.md](docs/extension-manifest.md)): the catalog's
+parts and `grh install --extension <dir>` read the same type, and grh's
+code names no tool.
 
 Each tool still installs and runs on its own. grh calls each tool's own
 install and uninstall commands. It never edits a tool's configuration itself.

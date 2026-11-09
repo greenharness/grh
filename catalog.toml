@@ -1,151 +1,255 @@
-# The parts grh knows, compiled into the binary (ADR-0050, harness.installer).
+# The parts grh knows, compiled into the binary (ADR-0050, ADR-0064).
 #
-# Each part names its binary, the release it pins (version and the sha256 of
-# each target's tarball, copied from that release's SHA256SUMS by
-# `scripts/pin.sh`), the tool's own commands that place and remove its
-# integration, and the published query that says whether it is there. grh
-# never writes a tool's config itself: it runs these commands.
+# Each [[part]] is a greenharness.toml v2 manifest (docs/extension-manifest.md):
+# its binary and the release it pins (version and the sha256 of each target's
+# tarball, copied from that release's SHA256SUMS by `scripts/pin.sh`), the
+# tool's own commands that place and remove its integration, and the status
+# query that says whether it is there. grh never writes a tool's config
+# itself: it runs these commands.
 #
-# `{bin}` is the absolute path of the part's binary. `query` names the parser
-# in src/owner.rs that reads that tool's answer as present / absent / partial
-# / unknown.
+# `{bin}` is the absolute path of the part's binary. A status query's `args`
+# run that binary; its answer is an exit-code pair or a state word at a JSON
+# path: present / absent / partial, anything else is unknown.
+#
+# `order` is ADR-0064's list of the parts, in catalog names. Every `needs` and
+# `enhances` edge points to an earlier entry; Catalog::checked refuses the rest.
 
 skills_repo = "greenharness/skills"
 skills_version = "0.5.0"
 skills_sha256 = "9bb0f7796a8f462bc5b20cb716791a7c0f4b1f972747885224c7e24d48e6384d"
+order = ["decisions", "greengate", "greenpiste", "router", "conform", "attest", "workflow", "design"]
 
 [profiles]
-solo = ["gate", "guardrails"]
-team = ["gate", "guardrails", "decisions", "conform"]
-full = ["gate", "guardrails", "decisions", "conform", "router"]
+solo = ["greengate", "greenpiste"]
+team = ["greengate", "greenpiste", "decisions", "conform"]
+full = ["greengate", "greenpiste", "decisions", "conform", "router"]
 
 [[part]]
+[part.extension]
 name = "decisions"
+version = "1.12.0"
+harness = ">=0.2"
 summary = "what is decided: architecture decision records, resolved"
 needs = []
+
+[part.tool]
 bin = "aval"
+[part.tool.release]
 repo = "fredericrous/aval"
 version = "1.12.0"
-skills = ["relais-architecture-conflict"]
-[part.sha256]
+[part.tool.release.sha256]
 aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
 x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
 aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
 x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
-[part.machine]
+[part.tool.machine]
 install = ["{bin}", "mcp", "install", "--write"]
 uninstall = ["{bin}", "mcp", "uninstall", "--write"]
-query = "aval-mcp"
-[part.repo_level]
+requires = ["claude"]
+[part.tool.machine.status]
+args = ["mcp", "install", "--check"]
+exit = { present = 0, absent = 1 }
+[part.tool.repo_level]
 install = ["{bin}", "hook", "install"]
 uninstall = ["{bin}", "hook", "uninstall", "--write"]
-query = "aval-hook"
+[part.tool.repo_level.status]
+args = ["hook", "uninstall", "--check"]
+exit = { present = 1, absent = 0 }
+
+[part.bundle]
+skills = ["relais-architecture-conflict"]
 
 [[part]]
-name = "gate"
+[part.extension]
+name = "greengate"
+version = "2.3.1"
+harness = ">=0.2"
 summary = "what a commit or a push may carry: git hooks"
 needs = []
+aliases = ["gate"]
+
+[part.tool]
 bin = "amont"
+[part.tool.release]
 repo = "greenharness/greengate"
 version = "2.3.1"
-skills = ["relais-verified-push", "merge-when-green", "tag-release"]
-[part.sha256]
+[part.tool.release.sha256]
 aarch64-apple-darwin = "fd0abfa930a965153ff450fc82602ca3f909b2d1933289d62a204af8d721c3cc"
 x86_64-apple-darwin = "e59b4d02be2601a08d808d6be73e2ba10d2f92bb48739fd83150332a66c98461"
 aarch64-unknown-linux-gnu = "7b4c7a2982e6ea3aaa44a1e1ec90c1a0f2a8b92737ab35048017c7b0161cc726"
 x86_64-unknown-linux-gnu = "1c93464178819e192a40706d0ab853f054c05523bac44e2707be2cd48594c37e"
 # `amont init`, never `amont install`: install copies the binary and fills
 # the machine's git template dir, machine state a repo step must not touch.
-[part.repo_level]
+[part.tool.repo_level]
 install = ["{bin}", "init"]
 uninstall = ["{bin}", "uninstall", "--repo"]
-query = "amont-list"
+[part.tool.repo_level.status]
+args = ["list", "--json"]
+json = ["installed", "state"]
+# Keep the placed binary while amont's git template directory bakes its path.
+[part.tool.keep_binary]
+args = ["list", "--json"]
+state = ["template_dir", "state"]
+absent = "absent"
+shims = ["template_dir", "shims"]
+binary = "binary"
+warning = "repositories armed by hand with it fail their next commit until `amont init` re-arms them"
+
+[part.bundle]
+skills = ["relais-verified-push", "merge-when-green", "tag-release"]
 
 [[part]]
-name = "guardrails"
+[part.extension]
+name = "greenpiste"
+version = "3.23.1"
+harness = ">=0.2"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
+aliases = ["guardrails"]
+
+[part.tool]
 bin = "amont-agent"
+[part.tool.release]
 repo = "greenharness/greenpiste"
 version = "3.23.1"
-skills = []
-[part.sha256]
+[part.tool.release.sha256]
 aarch64-apple-darwin = "3a5d3870fca20ba1ed4514bf1dc116c2e4a66a483359b6ed1b70c0b868695224"
 x86_64-apple-darwin = "cd37589483102e52c64bfd5dd3eb79d410a33cc9acf096349b30d22eb058b886"
 aarch64-unknown-linux-gnu = "66fe403bb6644cadc6179077f52f26977e96167acf2a81f7c27dcaa7959d2e8d"
 x86_64-unknown-linux-gnu = "4e69a29c9e887103c00fecd3a5c931ab7c1897ab18e1083781e99a0820c68edf"
-[part.machine]
+[part.tool.machine]
 install = ["{bin}", "install", "--write"]
 uninstall = ["{bin}", "uninstall", "--write"]
-query = "amont-agent-doctor"
+requires = ["claude"]
+[part.tool.machine.status]
+args = ["doctor", "--json"]
+json = ["integration", "state"]
 
 [[part]]
+[part.extension]
 name = "router"
+version = "0.39.0"
+harness = ">=0.2"
 summary = "which model runs a bounded task, verified and accounted"
 needs = []
+
+[part.tool]
 bin = "relais"
+[part.tool.release]
 repo = "fredericrous/relais"
 version = "0.39.0"
-skills = []
-[part.sha256]
+[part.tool.release.sha256]
 aarch64-apple-darwin = "aa3a27c88e8102f2cd92495d5d05e45ba83b45f469109c363821f9dfcee5e639"
 x86_64-apple-darwin = "c6fb9b233500e34f05cdefcfdbc0e9f33a8438d7b77b80bb45cc73d10d0ac95f"
 aarch64-unknown-linux-gnu = "9e53a39d04cd69fef0a1d233a0d3e2528f68e404be5cf85860d503964b021dd5"
 x86_64-unknown-linux-gnu = "b87768ec14b0c55c29a512156a6cc8f94e660733bb3670be874cf271ae26b455"
-[part.machine]
+[part.tool.machine]
 install = ["{bin}", "install", "--claude", "--user", "--write"]
 uninstall = ["{bin}", "uninstall", "--claude", "--user", "--write"]
-query = "relais-doctor"
+requires = ["claude"]
+[part.tool.machine.status]
+args = ["doctor", "--json"]
+json = ["integration", "state"]
 
 [[part]]
+[part.extension]
 name = "conform"
+version = "0.17.0"
+harness = ">=0.2"
 summary = "which decided code rules a tree breaks, by lint"
 needs = ["decisions"]
-bin = "adr-lint"
-repo = "fredericrous/adr-lint"
-version = "0.17.0"
-skills = []
+hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
 # Repo level writes nothing: `adr-lint sync` rewrites lint configs the
 # repository owns, so grh prints the commands instead.
-hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
-[part.sha256]
+
+[part.tool]
+bin = "adr-lint"
+[part.tool.release]
+repo = "fredericrous/adr-lint"
+version = "0.17.0"
+[part.tool.release.sha256]
 aarch64-apple-darwin = "5e8caa567fcb110d242eaad5b908f9863bad3af772dbb3e2cb017274bbc233d3"
 x86_64-apple-darwin = "e6d495d97c3f12d314b27aea57f1164d16701851ee56428369aaf2c29c786b14"
 aarch64-unknown-linux-gnu = "17282fe138c814a01b89865653ef1c309983823d220003efcf35799bff685b79"
 x86_64-unknown-linux-gnu = "3cd150e8539c733c84bb6c21092beb35700f54b5ddbc7ea1ee5b6b588b921b46"
 
 [[part]]
+[part.extension]
 name = "attest"
+version = "0.1.0"
+harness = ">=0.2"
 summary = "CI skips what your laptop already checked, on a signed tree"
-needs = ["gate"]
-skills = []
-# No binary on the machine: CI verifies, gate signs at pre-push.
-workflow = "attest"
+needs = ["greengate"]
+# No binary on the machine: CI verifies, greengate signs at pre-push.
+
+[[part.repo_file]]
+dirs = [".forgejo", ".github"]
+path = "workflows/attest.yml"
+content = '''
+name: attest
+on:
+  pull_request:
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: fredericrous/attest@v1
+'''
 
 [[part]]
+[part.extension]
 name = "workflow"
+version = "0.1.0"
+harness = ">=0.2"
 summary = "plans reviewed by a panel, one worktree per task, merge on green"
-needs = ["gate", "guardrails"]
+needs = ["greengate", "greenpiste"]
+
+[part.bundle]
 skills = [
-  "plan-review", "plan-picture", "worktree-task", "worktree-sweep", "diagnosing-bugs", "retro",
-  "interface-review", "interface", "accessibility", "layout", "writing",
-  "motion-design", "agent-model-fallback",
+  "plan-review",
+  "plan-picture",
+  "worktree-task",
+  "worktree-sweep",
+  "diagnosing-bugs",
+  "retro",
+  "interface-review",
+  "interface",
+  "accessibility",
+  "layout",
+  "writing",
+  "motion-design",
+  "agent-model-fallback",
 ]
 agents = [
-  "implementation-review", "interface-review",
-  "code-review-architect", "code-review-backend", "code-review-language",
-  "code-review-platform", "code-review-react", "code-review-tui",
+  "implementation-review",
+  "interface-review",
+  "code-review-architect",
+  "code-review-backend",
+  "code-review-language",
+  "code-review-platform",
+  "code-review-react",
+  "code-review-tui",
   "code-review-unix",
-  "plan-review-architect", "plan-review-backend", "plan-review-game-ux",
-  "plan-review-language", "plan-review-platform", "plan-review-po",
-  "plan-review-react", "plan-review-tui", "plan-review-ui-design",
-  "plan-review-unix", "plan-review-ux-research",
+  "plan-review-architect",
+  "plan-review-backend",
+  "plan-review-game-ux",
+  "plan-review-language",
+  "plan-review-platform",
+  "plan-review-po",
+  "plan-review-react",
+  "plan-review-tui",
+  "plan-review-ui-design",
+  "plan-review-unix",
+  "plan-review-ux-research",
 ]
 
 [[part]]
+[part.extension]
 name = "design"
+version = "0.1.0"
+harness = ">=0.2"
 summary = "the Duro design system, themed by your tokens (extension)"
 needs = []
-skills = []
+published = false
 # Installed from its published extension manifest; not published yet.
-extension = "unpublished"

@@ -5,6 +5,38 @@ section is missing here.
 
 ## Unreleased
 
+## v0.2.0
+
+### Changed
+
+- **Every part is a manifest.** `greenharness.toml` v2 (harness 0.2) is the
+  catalog's part type and what `grh install --extension <dir>` reads. It adds
+  `[tool]`, `[tool.release]`, `[tool.machine]` and `[tool.repo_level]` (with
+  `install`, `uninstall`, `requires` and a `status` query), `[tool.keep_binary]`,
+  `[[repo_file]]` and `[bundle]`, and `needs`, `enhances`, `aliases`, `hint`
+  and `published` in `[extension]`. A v1 manifest (Duro's) still installs;
+  v2 sections need a `harness` that 0.1 does not satisfy. See
+  `docs/extension-manifest.md`.
+- **grh's install path names no tool.** Status queries, the keep-binary rule
+  and attest's CI workflow come from the manifests; a level whose `requires`
+  command is missing is skipped with a gap that names it. The catalog refuses
+  unknown `needs`/`enhances`, cycles, alias collisions, parts missing from its
+  `order` and edges that point up it.
+- **Extensions use the same path.** An extension may carry a tool; its status
+  and keep-binary commands are recorded at install, so uninstall works after
+  its directory is gone. A manifest the catalog does not pin lists, on stderr
+  and before asking, the binary it would download and every command and repo
+  file path it would use.
+- The part `gate` is now `greengate`, and `guardrails` is now `greenpiste`. `grh install gate`, `grh uninstall gate` and `grh gate ...` still work: each resolves to `greengate` through its alias and prints one warning on stderr naming the command to use instead, e.g. `gate is now greengate: run grh uninstall greengate`. For `grh gate ...` the warning comes before the part runs, so stdout stays the tool's alone.
+- The receipt is version 2. The first command that holds the receipt lock (install, uninstall) copies `receipt.json` to `receipt.json.pre-0.2` (rewritten from the current file whenever that file is older than version 2, so it always holds the receipt a downgrade needs), rewrites entries recorded under `gate` or `guardrails` to the new names, and says so on stderr, even under `--quiet`. `grh status` and `grh audit` never write the receipt: they read an alias in memory. A version 1 receipt still loads. A save that changes nothing no longer touches the file.
+- The keep-binary check reads a tool's state with the same words as every status query (`installed` counts as present, like `present` and `partial`), so it keeps a binary in more cases, never fewer.
+- Uninstalling a tool whose binary is already gone keeps its receipt entry and says so, instead of running an undo whose result grh cannot check. Reinstall the part, then `grh uninstall` it again.
+- `grh audit` still names the parts `gate`, `guardrails` and so on in its rows; they move to the new names with the profiles.
+
+### Downgrading to 0.1.19
+
+grh 0.1.19 refuses a version 2 receipt. To go back: `grh uninstall` each part that `receipt.json.pre-0.2` does not list (installed under 0.2.0), install grh 0.1.19, then restore `receipt.json.pre-0.2` over `receipt.json` (both in `$XDG_STATE_HOME/grh`, else `~/.local/state/grh`).
+
 ## v0.1.19
 
 ### Changed

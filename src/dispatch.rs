@@ -5,8 +5,9 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::catalog::Catalog;
+use crate::catalog::{Catalog, Verb};
 use crate::exit::Exit;
+use crate::ops::Ui;
 
 /// Where grh puts the binaries it downloads: `$GRH_BIN_DIR`, else
 /// `~/.local/bin`.
@@ -43,11 +44,17 @@ pub fn run(catalog: &Catalog, argv: &[OsString]) -> Exit {
     let Some(part) = catalog.part(&name) else {
         return Exit::Usage(format!("unknown command or part: {name}; see grh --help"));
     };
-    let Some(bin) = part.bin.as_deref() else {
+    if let Some(notice) = catalog.alias_notice(&name, Verb::Dispatch) {
+        Ui::new(false).warn(&notice);
+    }
+    let Some(bin) = part.bin() else {
         return Exit::Usage(format!("{name} has no command of its own"));
     };
     let Some(path) = find(bin) else {
-        return Exit::NotInstalled(format!("{name} is not installed: grh install {name}"));
+        return Exit::NotInstalled(format!(
+            "{0} is not installed: grh install {0}",
+            part.name()
+        ));
     };
     let err = Command::new(&path).args(args).exec();
     Exit::Failed(format!("cannot run {}: {err}", path.display()))

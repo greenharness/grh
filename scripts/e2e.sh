@@ -101,7 +101,7 @@ grh status --json > "$scratch/status.json"
 python3 - "$scratch/status.json" <<'PY'
 import json, sys
 parts = json.load(open(sys.argv[1]))["parts"]
-want = {"decisions", "gate", "guardrails", "router", "conform"}
+want = {"decisions", "greengate", "greenpiste", "router", "conform"}
 bad = [p["name"] for p in parts if p["name"] in want and not (p["installed"] and p["source"] == "placed")]
 if bad:
     sys.exit(f"not installed and placed: {bad}")
@@ -155,7 +155,7 @@ echo "nothing left behind"
 step "an integration that was there first survives uninstall"
 "$tools/amont-agent" install --write
 grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "amont-agent wrote no hook entry"; exit 1; }
-grh install guardrails --yes
+grh install greenpiste --yes
 grh uninstall --yes
 grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
 "$tools/amont-agent" uninstall --write
@@ -164,7 +164,9 @@ step "a binary that was there first survives uninstall"
 other="$scratch/other"
 mkdir -p "$other"
 ln -s "$tools/amont" "$other/amont"
-PATH="$other:$PATH" grh install gate --yes
+# Under its old name: the alias resolves to greengate and warns once.
+PATH="$other:$PATH" grh install gate --yes 2> "$scratch/alias.err"
+grep -q 'gate is now greengate' "$scratch/alias.err" || { echo "no alias warning:"; cat "$scratch/alias.err"; exit 1; }
 if [ -e "$GRH_BIN_DIR/amont" ]; then
     echo "grh placed an amont although one was on PATH"
     exit 1

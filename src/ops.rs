@@ -104,6 +104,13 @@ impl Summary {
         self.backups.push(line(what, next));
     }
 
+    /// Take over everything `other` collected.
+    pub fn merge(&mut self, other: Summary) {
+        self.gaps.extend(other.gaps);
+        self.skipped.extend(other.skipped);
+        self.backups.extend(other.backups);
+    }
+
     /// Printed on stderr even when quiet; nothing when there is nothing.
     pub fn print(&self, ui: &Ui) {
         let sections = [
@@ -225,7 +232,7 @@ pub fn run_tool(ui: &Ui, argv: &[String], cwd: Option<&Path>) -> Result<i32, Str
     let Some((prog, args)) = argv.split_first() else {
         return Err("empty command".into());
     };
-    ui.say(&format!("  $ {}", argv.join(" ")));
+    ui.say(&format!("  $ {}", command_line(argv)));
     let mut cmd = Command::new(prog);
     cmd.args(args).stdin(Stdio::null());
     if let Some(d) = cwd {
@@ -254,11 +261,19 @@ pub fn on_path(name: &str) -> bool {
 }
 
 /// The binary the receipt records for `part`: its path and whether grh placed it.
-pub fn recorded_bin(receipt: &Receipt, part: &str) -> Option<(PathBuf, bool)> {
+pub fn recorded_bin(receipt: &Receipt, part: &Part) -> Option<(PathBuf, bool)> {
+    recorded_bin_where(receipt, |recorded| part.answers_to(recorded))
+}
+
+/// The binary the receipt records under a part name `belongs` accepts.
+pub fn recorded_bin_where(
+    receipt: &Receipt,
+    belongs: impl Fn(&str) -> bool,
+) -> Option<(PathBuf, bool)> {
     receipt
         .entries
         .iter()
-        .filter(|e| e.part == part && e.level == Level::Machine)
+        .filter(|e| belongs(&e.part) && e.level == Level::Machine)
         .find_map(|e| match &e.kind {
             Kind::BinaryPlaced { path, .. } => Some((PathBuf::from(path), true)),
             Kind::BinaryAdopted { path } => Some((PathBuf::from(path), false)),
@@ -266,12 +281,33 @@ pub fn recorded_bin(receipt: &Receipt, part: &str) -> Option<(PathBuf, bool)> {
         })
 }
 
+/// One word of a command line as a POSIX shell reads it back unchanged.
+pub fn shell_quote(word: &str) -> String {
+    let plain = !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c));
+    if plain {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\\''"))
+    }
+}
+
+/// A command as one line, each argument shell-quoted.
+pub fn command_line(argv: &[String]) -> String {
+    argv.iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// The part's binary: the receipt's, else the first on PATH or in grh's bin dir.
 pub fn bin_for(receipt: &Receipt, part: &Part) -> Option<PathBuf> {
-    recorded_bin(receipt, &part.name)
+    recorded_bin(receipt, part)
         .map(|(path, _)| path)
         .filter(|path| path.exists())
-        .or_else(|| part.bin.as_deref().and_then(dispatch::find))
+        .or_else(|| part.bin().and_then(dispatch::find))
 }
 
 pub fn is_integration(k: &Kind) -> bool {
@@ -279,8 +315,8 @@ pub fn is_integration(k: &Kind) -> bool {
 }
 
 /// Does `e` belong to `part` at `level` (and, for a repo, to `repo`)?
-pub fn same_scope(e: &Entry, part: &str, level: Level, repo: Option<&Path>) -> bool {
-    e.part == part
+pub fn same_scope(e: &Entry, part: &Part, level: Level, repo: Option<&Path>) -> bool {
+    part.answers_to(&e.part)
         && e.level == level
         && e.repo.as_deref() == repo.map(|r| r.to_string_lossy()).as_deref()
 }
@@ -288,7 +324,7 @@ pub fn same_scope(e: &Entry, part: &str, level: Level, repo: Option<&Path>) -> b
 pub fn listing(cat: &Catalog) -> String {
     let mut out = String::from("name parts or profiles to install.\nparts:\n");
     for part in &cat.parts {
-        out.push_str(&format!("  {:<11} {}\n", part.name, part.summary));
+        out.push_str(&format!("  {:<11} {}\n", part.name(), part.summary()));
     }
     out.push_str("profiles:\n");
     for (name, members) in &cat.profiles {

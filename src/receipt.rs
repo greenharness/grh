@@ -13,8 +13,9 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
+use crate::manifest::{ExitPair, KeepBinary, RawStatus, Status};
 
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 2;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -30,12 +31,100 @@ pub enum State {
     Done,
 }
 
+/// A status query as the receipt keeps it. The receipt is a persisted file
+/// older and newer grh both read, so these records ignore unknown keys; the
+/// manifest types they mirror refuse them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedStatus {
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit: Option<RecordedExitPair>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub json: Option<Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedExitPair {
+    pub present: i32,
+    pub absent: i32,
+}
+
+/// A `keep_binary` query as the receipt keeps it; see `RecordedStatus`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecordedKeepBinary {
+    pub args: Vec<String>,
+    pub state: Vec<String>,
+    pub absent: String,
+    pub shims: Vec<String>,
+    pub binary: String,
+    pub warning: String,
+}
+
+impl From<&Status> for RecordedStatus {
+    fn from(status: &Status) -> RecordedStatus {
+        let raw = RawStatus::from(status);
+        RecordedStatus {
+            args: raw.args,
+            exit: raw.exit.map(|pair| RecordedExitPair {
+                present: pair.present,
+                absent: pair.absent,
+            }),
+            json: raw.json,
+        }
+    }
+}
+
+impl TryFrom<RecordedStatus> for Status {
+    type Error = String;
+
+    fn try_from(recorded: RecordedStatus) -> Result<Status, String> {
+        Status::try_from(RawStatus {
+            args: recorded.args,
+            exit: recorded.exit.map(|pair| ExitPair {
+                present: pair.present,
+                absent: pair.absent,
+            }),
+            json: recorded.json,
+        })
+    }
+}
+
+impl From<&KeepBinary> for RecordedKeepBinary {
+    fn from(spec: &KeepBinary) -> RecordedKeepBinary {
+        RecordedKeepBinary {
+            args: spec.args.clone(),
+            state: spec.state.clone(),
+            absent: spec.absent.clone(),
+            shims: spec.shims.clone(),
+            binary: spec.binary.clone(),
+            warning: spec.warning.clone(),
+        }
+    }
+}
+
+impl From<RecordedKeepBinary> for KeepBinary {
+    fn from(recorded: RecordedKeepBinary) -> KeepBinary {
+        KeepBinary {
+            args: recorded.args,
+            state: recorded.state,
+            absent: recorded.absent,
+            shims: recorded.shims,
+            binary: recorded.binary,
+            warning: recorded.warning,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Kind {
     BinaryPlaced {
         path: String,
         sha256: String,
+        /// The part's `keep_binary` at install time, so uninstall can ask it
+        /// without the manifest.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        keep_binary: Option<Box<RecordedKeepBinary>>,
     },
     BinaryAdopted {
         path: String,
@@ -43,6 +132,10 @@ pub enum Kind {
     ToolInstall {
         argv: Vec<String>,
         undo_argv: Vec<String>,
+        /// The level's `status` at install time, so uninstall can confirm the
+        /// undo without the manifest (an entry from grh 0.1.x has none).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        status: Option<RecordedStatus>,
     },
     ToolInstallAdopted,
     File {
@@ -97,6 +190,18 @@ impl Entry {
 pub struct Receipt {
     pub version: u32,
     pub entries: Vec<Entry>,
+}
+
+impl Receipt {
+    /// Rename entries whose part `rename` maps to another name, in memory:
+    /// a receipt written under an alias is read under the part's own name.
+    pub fn rename_parts(&mut self, rename: impl Fn(&str) -> Option<String>) {
+        for entry in &mut self.entries {
+            if let Some(canonical) = rename(&entry.part) {
+                entry.part = canonical;
+            }
+        }
+    }
 }
 
 impl Default for Receipt {
@@ -168,13 +273,22 @@ pub struct Store {
 }
 
 impl Store {
-    /// Lock and load the receipt in the default state directory.
-    pub fn open() -> Result<Store, Exit> {
-        Store::open_in(&state_dir()?)
+    /// Lock the receipt in the default state directory, load it and migrate
+    /// it (see `migrate`): the only way a command gets a locked store, so none
+    /// holds one that is not at `VERSION`.
+    pub fn open_migrating(rename: impl Fn(&str) -> Option<String>) -> Result<Store, Exit> {
+        let mut store = Store::lock_in(&state_dir()?)?;
+        store.migrate(rename)?;
+        Ok(store)
     }
 
-    /// Lock and load the receipt in `dir` (the `grh` state directory).
+    /// Lock and load the receipt in `dir`, unmigrated.
+    #[cfg(test)]
     pub fn open_in(dir: &Path) -> Result<Store, Exit> {
+        Store::lock_in(dir)
+    }
+
+    fn lock_in(dir: &Path) -> Result<Store, Exit> {
         fs::create_dir_all(dir)
             .map_err(|e| Exit::Failed(format!("cannot create {}: {e}", dir.display())))?;
         let lock_path = dir.join("receipt.lock");
@@ -216,6 +330,63 @@ impl Store {
         self.dir.join("receipt.json")
     }
 
+    /// Rewrite entries recorded under a part's old name (`rename` maps an
+    /// alias to the part's own name) and raise the receipt to `VERSION`,
+    /// whenever the file on disk is older, renames or not: a version-1 file
+    /// left at 1 would be read by grh 0.1.x while holding 0.2-only names.
+    /// Only a command holding this store's lock gets here. The receipt as it
+    /// was is copied to `receipt.json.pre-0.2` first: every time the file on
+    /// disk is older than `VERSION` (a downgrade and an upgrade again must
+    /// leave the copy of the receipt the downgrade restored; after a crash
+    /// the file still equals the original). A receipt already at `VERSION`
+    /// that still holds an old name (a part renamed after the file reached
+    /// version 2) is copied only when no copy exists, so the copy a
+    /// downgrade needs is never replaced by a version-2 file.
+    /// Says what it did on stderr, even under `--quiet`.
+    fn migrate(&mut self, rename: impl Fn(&str) -> Option<String>) -> Result<(), Exit> {
+        let mut renames: Vec<(String, String)> = Vec::new();
+        for entry in &self.receipt.entries {
+            if let Some(canonical) = rename(&entry.part) {
+                let pair = (entry.part.clone(), canonical);
+                if !renames.contains(&pair) {
+                    renames.push(pair);
+                }
+            }
+        }
+        let original = self.path();
+        let older = self.receipt.version < VERSION;
+        if !original.exists() || (renames.is_empty() && !older) {
+            return Ok(());
+        }
+        let backup = self.dir.join("receipt.json.pre-0.2");
+        if older || !backup.exists() {
+            let bytes = fs::read(&original)
+                .map_err(|e| Exit::Failed(format!("cannot read {}: {e}", original.display())))?;
+            write_atomic(&backup, &bytes, 0o644)?;
+        }
+        self.receipt.rename_parts(&rename);
+        self.receipt.version = VERSION;
+        self.save()?;
+        let renamed: Vec<String> = renames
+            .iter()
+            .map(|(from, to)| format!("{from} -> {to}"))
+            .collect();
+        let what = if renamed.is_empty() {
+            "no part renamed".to_string()
+        } else {
+            format!("renamed {}", renamed.join(", "))
+        };
+        eprintln!(
+            "migrated {} to version {VERSION}: {what}",
+            original.display()
+        );
+        eprintln!(
+            "the old receipt is kept as {}; the CHANGELOG explains the way back to grh 0.1.x",
+            backup.display()
+        );
+        Ok(())
+    }
+
     /// The `grh` state directory this store lives in.
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -230,6 +401,10 @@ impl Store {
         let mut text = serde_json::to_string_pretty(&self.receipt)
             .map_err(|e| Exit::Failed(format!("cannot encode the receipt: {e}")))?;
         text.push('\n');
+        // A save that changes nothing leaves the file, and its mtime, alone.
+        if fs::read(self.path()).is_ok_and(|current| current == text.as_bytes()) {
+            return Ok(());
+        }
         write_atomic(&self.path(), text.as_bytes(), 0o644)
     }
 
@@ -325,6 +500,7 @@ mod tests {
             Kind::BinaryPlaced {
                 path: "/b/aval".into(),
                 sha256: "01".into(),
+                keep_binary: None,
             },
             Kind::BinaryAdopted {
                 path: "/b/amont".into(),
@@ -332,6 +508,11 @@ mod tests {
             Kind::ToolInstall {
                 argv: vec!["aval".into(), "mcp".into()],
                 undo_argv: vec!["aval".into(), "unmcp".into()],
+                status: Some(RecordedStatus {
+                    args: vec!["list".into()],
+                    exit: None,
+                    json: Some(vec!["state".into()]),
+                }),
             },
             Kind::ToolInstallAdopted,
             Kind::File {
@@ -418,5 +599,27 @@ mod tests {
             0o755
         );
         assert_eq!(fs::read_dir(p.parent().unwrap()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn an_entry_with_unknown_keys_inside_a_recorded_query_still_reads() {
+        let text = r#"{"part":"p","level":"machine","state":"done","kind":{"tool-install":{
+            "argv":["t"],"undo_argv":["u"],
+            "status":{"args":["s"],"exit":{"present":0,"absent":1,"later":true},"later":1}}}}"#;
+        let entry: Entry = serde_json::from_str(text).unwrap();
+        let Kind::ToolInstall { status, .. } = entry.kind else {
+            panic!("not a tool install");
+        };
+        let status = Status::try_from(status.unwrap()).unwrap();
+        assert_eq!(status.args, vec!["s".to_string()]);
+
+        let text = r#"{"part":"p","level":"machine","state":"done","kind":{"binary-placed":{
+            "path":"/b","sha256":"01",
+            "keep_binary":{"args":["a"],"state":["s"],"absent":"x","shims":["h"],"binary":"b","warning":"w","later":2}}}}"#;
+        let entry: Entry = serde_json::from_str(text).unwrap();
+        let Kind::BinaryPlaced { keep_binary, .. } = entry.kind else {
+            panic!("not a placed binary");
+        };
+        assert_eq!(KeepBinary::from(*keep_binary.unwrap()).absent, "x");
     }
 }

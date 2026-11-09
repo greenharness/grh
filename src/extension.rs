@@ -8,8 +8,9 @@ use std::process::{Command, Stdio};
 
 use crate::catalog::Part;
 use crate::exit::Exit;
-use crate::manifest::Manifest;
-use crate::ops::{confirm, on_path, run_tool, Consent, Summary, Ui};
+use crate::install::{show_commands, Run};
+use crate::manifest::{Bundle as BundleNames, Manifest};
+use crate::ops::{command_line, confirm, git_root, on_path, run_tool, Consent, Ui};
 use crate::receipt::{Entry, Kind, State, Store};
 use crate::skills::{self, Bundle};
 
@@ -18,6 +19,7 @@ pub const PREFIX: &str = "ext:";
 #[derive(Debug, Default)]
 pub struct Opts {
     pub dir: PathBuf,
+    pub repo: bool,
     pub replace: bool,
     pub dry_run: bool,
     pub yes: bool,
@@ -85,22 +87,20 @@ fn gather(dir: &Path, m: &Manifest) -> Result<(Part, Bundle), Exit> {
         files.insert(format!("agents/{name}.md"), bytes);
         agents.push(name);
     }
-    let part = Part {
-        name: format!("{PREFIX}{}", m.extension.name),
-        summary: format!("extension {} {}", m.extension.name, m.extension.version),
-        needs: Vec::new(),
-        bin: None,
-        repo: None,
-        version: None,
-        sha256: BTreeMap::new(),
-        machine: None,
-        repo_level: None,
-        skills,
-        agents,
-        hint: None,
-        workflow: None,
-        extension: None,
-    };
+    // The extension is installed as the part `ext:<name>`: its own tool,
+    // repo files and hint, and the skills and agents gathered above.
+    let mut part = m.clone();
+    part.extension.name = format!("{PREFIX}{}", m.extension.name);
+    part.extension.summary = Some(format!(
+        "extension {} {}",
+        m.extension.name, m.extension.version
+    ));
+    part.extension.needs.clear();
+    part.extension.enhances.clear();
+    part.extension.aliases.clear();
+    part.skill.clear();
+    part.agent.clear();
+    part.bundle = Some(BundleNames { skills, agents });
     Ok((part, Bundle::from_files(files)))
 }
 
@@ -141,19 +141,26 @@ fn session_block(m: &Manifest) -> serde_json::Value {
     serde_json::json!({ "hooks": { "SessionStart": [ { "hooks": hooks } ] } })
 }
 
-pub fn run(opts: &Opts) -> Result<(), Exit> {
+pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
     let ui = Ui::new(opts.quiet);
     let m = Manifest::load(&opts.dir)?;
     let dir = &opts.dir;
     let (part, bundle) = gather(dir, &m)?;
-    let name = part.name.clone();
+    let name = part.name().to_string();
+    let repo = if opts.repo { Some(git_root()?) } else { None };
     ui.say("grh will install:");
     ui.say(&format!(
         "  {name}: {} skills, {} agents, {} mcp servers",
-        part.skills.len(),
-        part.agents.len(),
+        part.bundle_skills().len(),
+        part.bundle_agents().len(),
         m.mcp.len()
     ));
+    // The catalog does not pin an extension: show what it would run before
+    // asking, whatever `--quiet` says and whether or not stdin is a terminal.
+    show_commands(&part);
+    for mcp in &m.mcp {
+        eprintln!("  mcp add: {}", command_line(&mcp_argv(mcp).0));
+    }
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
@@ -162,22 +169,10 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let mut store = Store::open()?;
-    let mut failures: Vec<Exit> = Vec::new();
-    let mut sum = Summary::default();
-
-    if !part.skills.is_empty() || !part.agents.is_empty() {
-        let claude = skills::claude_dir()?;
-        let placement = skills::place(&bundle, &part, &claude, &mut store, opts.replace)?;
-        ui.ok(&format!(
-            "{name}: {} skill and agent files in {}",
-            placement.placed.len(),
-            claude.display()
-        ));
-        for s in &placement.skipped {
-            ui.warn(&format!("{}: {}", s.path.display(), s.reason));
-        }
-    }
+    let store = Store::open_migrating(|name| catalog.name_of_alias(name))?;
+    let mut run = Run::new(None, ui, store, opts.replace, repo, Some(bundle));
+    let mut failures: Vec<Exit> = run.part(&part);
+    let (ui, mut store, mut sum) = run.into_parts();
 
     for mcp in &m.mcp {
         let (argv, undo_argv) = mcp_argv(mcp);
@@ -239,6 +234,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
             Kind::ToolInstall {
                 argv: argv.clone(),
                 undo_argv,
+                status: None,
             },
         ))?;
         match run_tool(&ui, &argv, None) {
@@ -250,7 +246,7 @@ pub fn run(opts: &Opts) -> Result<(), Exit> {
                 // The add did not happen: drop its pending step.
                 store.receipt.entries.remove(idx);
                 store.save()?;
-                let e = Exit::Failed(format!("{} exited {code}", argv.join(" ")));
+                let e = Exit::Failed(format!("{} exited {code}", crate::ops::command_line(&argv)));
                 ui.fail(&format!("{name}: {}", crate::ops::text(&e)));
                 failures.push(e);
             }
@@ -315,6 +311,10 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
         .collect();
     for e in &entries {
         let outcome = match &e.kind {
+            // An entry that recorded a status is a tool's, undone by uninstall.
+            Kind::ToolInstall {
+                status: Some(_), ..
+            } => continue,
             Kind::ToolInstall { undo_argv, .. } => {
                 let ran = run_tool(ui, undo_argv, None);
                 // The entry goes only when claude reports the server gone.
@@ -322,7 +322,7 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
                     (_, Some(Ok(false))) => Ok(()),
                     (Ok(code), _) => Err(format!(
                         "{} exited {code} and the server is not confirmed gone; entry kept",
-                        undo_argv.join(" ")
+                        crate::ops::command_line(undo_argv)
                     )),
                     (Err(m), _) => Err(format!("{m}; entry kept")),
                 }
@@ -342,7 +342,7 @@ pub fn remove(ui: &Ui, store: &mut Store, name: &str) -> Vec<Exit> {
             }
         }
     }
-    match skills::remove(name, store) {
+    match skills::remove(|recorded| recorded == name, store) {
         Ok(r) => {
             if !r.removed.is_empty() {
                 ui.ok(&format!(

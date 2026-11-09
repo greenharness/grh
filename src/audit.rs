@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use crate::catalog::Catalog;
 use crate::exit::Exit;
+use crate::manifest::Status;
 use crate::owner::{self, Answer};
 
 const RECOMMEND: &str = "recommend";
@@ -103,6 +104,40 @@ fn has_duro(root: &Path) -> bool {
         .any(|deps| deps.keys().any(|n| n.starts_with("@duro-app/")))
 }
 
+/// The status query the catalog part carrying binary `bin` declares for a
+/// level: the same query `grh install` and `grh status` run. Found by binary,
+/// so it does not depend on what the catalog calls the part.
+fn declared(cat: &Catalog, bin: &str, repo_level: bool) -> Option<(String, Status)> {
+    let part = cat.parts.iter().find(|p| p.bin() == Some(bin))?;
+    let level = if repo_level {
+        part.repo_level()
+    } else {
+        part.machine()
+    }?;
+    Some((part.bin()?.to_string(), level.status.clone()?))
+}
+
+/// The answer of the declared status query of the part carrying `bin`, run on
+/// the first candidate binary found; unknown when the part, its query or the
+/// binary is missing.
+fn declared_state(cat: &Catalog, bin: &str, repo_level: bool, repo: Option<&Path>) -> Answer {
+    declared(cat, bin, repo_level)
+        .and_then(|(bin, status)| {
+            candidates(&bin)
+                .first()
+                .map(|b| owner::run_status(&status, b, repo))
+        })
+        .unwrap_or(Answer::Unknown)
+}
+
+/// What the catalog calls the part carrying binary `bin`, else `bin` itself.
+fn part_named_for(cat: &Catalog, bin: &str) -> String {
+    cat.parts
+        .iter()
+        .find(|p| p.bin() == Some(bin))
+        .map_or_else(|| bin.to_string(), |p| p.name().to_string())
+}
+
 pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
     let root = git(given, &["rev-parse", "--show-toplevel"])
@@ -126,9 +161,8 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Hooks.
     let mut hooks: Vec<String> = Vec::new();
-    let amont_state = candidates("amont")
-        .first()
-        .map_or(Answer::Unknown, |b| owner::amont_list(b, Some(&root)));
+    let gate_part = part_named_for(cat, "amont");
+    let amont_state = declared_state(cat, "amont", true, Some(&root));
     if amont_state == Answer::Present {
         hooks.push("amont".into());
     }
@@ -136,7 +170,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     if let Some(p) = &hooks_path {
         hooks.push(format!("core.hooksPath={p}"));
         warnings.push(format!(
-            "core.hooksPath redirects git hooks to {p}; amont refuses a redirected hooks path: unset it before grh install gate"
+            "core.hooksPath redirects git hooks to {p}; amont refuses a redirected hooks path: unset it before grh install {gate_part}"
         ));
     }
     let mut managers: Vec<&str> = Vec::new();
@@ -155,7 +189,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     for m in &managers {
         hooks.push((*m).to_string());
         warnings.push(format!(
-            "{m} already manages git hooks here; the gate part (amont) installs its own hooks next to it: check they do not clash"
+            "{m} already manages git hooks here; the {gate_part} part (amont) installs its own hooks next to it: check they do not clash"
         ));
     }
     if amont_state != Answer::Present {
@@ -192,11 +226,8 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         .filter(|p| root.join(p).exists())
         .collect();
     let claude_set_up = !claude_files.is_empty();
-    let state_of = |bin: &str, q: fn(&Path) -> Answer| {
-        candidates(bin).first().map_or(Answer::Unknown, |b| q(b))
-    };
-    let guardrails_state = state_of("amont-agent", owner::amont_agent_doctor);
-    let router_state = state_of("relais", owner::relais_doctor);
+    let guardrails_state = declared_state(cat, "amont-agent", false, None);
+    let router_state = declared_state(cat, "relais", false, None);
     let aval_mcp_registered = candidates("claude").first().is_some_and(|c| {
         Command::new(c)
             .args(["mcp", "get", "aval"])
@@ -219,13 +250,13 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Shadowed binaries.
     for part in &cat.parts {
-        if let Some(bin) = &part.bin {
+        if let Some(bin) = part.bin() {
             let found = candidates(bin);
             if found.len() > 1 {
                 let list: Vec<String> = found.iter().map(|p| p.display().to_string()).collect();
                 warnings.push(format!(
                     "{bin} ({}) is shadowed on PATH: {} candidates, {} wins: {}",
-                    part.name,
+                    part.name(),
                     found.len(),
                     found[0].display(),
                     list.join(", ")

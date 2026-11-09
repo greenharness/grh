@@ -3,29 +3,20 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::catalog::{Catalog, Integration, Part, Unknown};
+use crate::catalog::{Catalog, Part, Unknown, Verb};
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
+use crate::manifest::{stays_inside, RepoFile, ToolLevel};
 use crate::ops::{
-    absolute, confirm, git_root, listing, on_path, recorded_bin, run_tool, same_scope, subst, text,
-    worst_of, Consent, Summary, Ui,
+    absolute, command_line, confirm, git_root, listing, on_path, recorded_bin, run_tool,
+    same_scope, subst, text, worst_of, Consent, Summary, Ui,
 };
 use crate::owner::{self, Answer};
-use crate::receipt::{write_atomic, Entry, Kind, Level, State, Store};
+use crate::receipt::{
+    write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
+};
 use crate::skills::{self, Bundle};
-
-const ATTEST_WORKFLOW: &str = "\
-name: attest
-on:
-  pull_request:
-jobs:
-  attest:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: fredericrous/attest@v1
-";
 
 #[derive(Debug, Default)]
 pub struct Opts {
@@ -37,52 +28,148 @@ pub struct Opts {
     pub quiet: bool,
 }
 
-struct Run<'a> {
-    cat: &'a Catalog,
-    ui: Ui,
-    store: Store,
-    sum: Summary,
+/// One install in progress: the receipt it writes and what it reports.
+#[derive(Debug)]
+pub struct Run<'a> {
+    cat: Option<&'a Catalog>,
+    pub ui: Ui,
+    pub store: Store,
+    pub sum: Summary,
     replace: bool,
     repo: Option<PathBuf>,
     bundle: Option<Result<Bundle, String>>,
-    claude: bool,
+}
+
+/// What the person is shown before agreeing to a manifest the catalog does
+/// not pin: the binary it would download (from a repository and version the
+/// same manifest names, checked against a sha256 it also supplies), every
+/// command it would run, every file path it would write and every host
+/// command it needs. On stderr, even under `--quiet`.
+pub fn show_commands(part: &Part) {
+    let line = |what: &str, argv: &[String]| {
+        eprintln!("  {what}: {}", command_line(argv));
+    };
+    let bin = part.bin().map(|b| b.to_string());
+    let tool_bin = |argv: &[String]| -> Vec<String> {
+        argv.iter()
+            .map(|a| a.replace("{bin}", bin.as_deref().unwrap_or("{bin}")))
+            .collect()
+    };
+    eprintln!(
+        "{} is not pinned by grh's catalog; it would run and use:",
+        part.name()
+    );
+    if let Some(release) = part.release() {
+        eprintln!(
+            "  download: {} {} from github.com/{} (when it is not already on PATH)",
+            bin.as_deref().unwrap_or("{bin}"),
+            release.version,
+            release.repo
+        );
+    }
+    for (level, spec) in [("machine", part.machine()), ("repo", part.repo_level())] {
+        let Some(spec) = spec else { continue };
+        line(&format!("{level} install"), &tool_bin(&spec.install));
+        line(&format!("{level} uninstall"), &tool_bin(&spec.uninstall));
+        if let Some(status) = &spec.status {
+            let mut argv = vec![bin.clone().unwrap_or_default()];
+            argv.extend(status.args.iter().cloned());
+            line(&format!("{level} status"), &argv);
+        }
+        for need in &spec.requires {
+            eprintln!(
+                "  {level} requires: {}",
+                command_line(std::slice::from_ref(need))
+            );
+        }
+    }
+    if let Some(keep) = part.keep_binary() {
+        let mut argv = vec![bin.clone().unwrap_or_default()];
+        argv.extend(keep.args.iter().cloned());
+        line("keep-binary", &argv);
+    }
+    for check in &part.doctor {
+        line("doctor", std::slice::from_ref(&check.command));
+    }
+    for file in &part.repo_file {
+        for dir in &file.dirs {
+            eprintln!(
+                "  repo file: {}",
+                command_line(&[format!("{dir}/{}", file.path)])
+            );
+        }
+    }
+}
+
+impl<'a> Run<'a> {
+    pub fn into_parts(self) -> (Ui, Store, Summary) {
+        (self.ui, self.store, self.sum)
+    }
+
+    pub fn new(
+        cat: Option<&'a Catalog>,
+        ui: Ui,
+        store: Store,
+        replace: bool,
+        repo: Option<PathBuf>,
+        bundle: Option<Bundle>,
+    ) -> Run<'a> {
+        Run {
+            cat,
+            ui,
+            store,
+            sum: Summary::default(),
+            replace,
+            repo,
+            bundle: bundle.map(Ok),
+        }
+    }
+}
+
+/// `argv` with `{bin}` replaced by the part's binary name, as the plan shows it.
+fn bin_substituted(part: &Part, argv: &[String]) -> Vec<String> {
+    match part.bin() {
+        Some(bin) => subst(argv, Path::new(bin)),
+        None => argv.to_vec(),
+    }
 }
 
 fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     ui.say("grh will install:");
     for part in parts {
-        ui.say(&format!("  {}: {}", part.name, part.summary));
-        if let (Some(bin), Some(v)) = (&part.bin, &part.version) {
+        ui.say(&format!("  {}: {}", part.name(), part.summary()));
+        if let (Some(bin), Some(release)) = (part.bin(), part.release()) {
+            let v = &release.version;
             ui.say(&format!(
                 "      binary {bin} {v}: adopt the one on PATH, else download"
             ));
         }
-        if let Some(machine) = &part.machine {
+        if let Some(machine) = part.machine() {
             ui.say(&format!(
                 "      machine: {} (unless already present)",
-                machine.install.join(" ")
+                command_line(&bin_substituted(part, &machine.install))
             ));
         }
-        if let (Some(r), Some(_)) = (&part.repo_level, repo) {
+        if let (Some(r), Some(_)) = (part.repo_level(), repo) {
             ui.say(&format!(
                 "      repo: {} (unless already present)",
-                r.install.join(" ")
+                command_line(&bin_substituted(part, &r.install))
             ));
         }
-        if !part.skills.is_empty() || !part.agents.is_empty() {
+        if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
             ui.say(&format!(
                 "      {} skills and {} agents into the Claude config directory",
-                part.skills.len(),
-                part.agents.len()
+                part.bundle_skills().len(),
+                part.bundle_agents().len()
             ));
         }
-        if part.workflow.is_some() {
-            ui.say("      the attest CI workflow (needs --repo)");
+        for file in &part.repo_file {
+            ui.say(&format!("      the CI file {} (needs --repo)", file.path));
         }
-        if let Some(h) = &part.hint {
+        if let Some(h) = part.hint() {
             ui.say(&format!("      then by hand: {h}"));
         }
-        if part.extension.is_some() {
+        if !part.is_published() {
             ui.say("      extension: not published yet");
         }
     }
@@ -93,6 +180,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     if opts.names.is_empty() {
         return Err(Exit::Usage(listing(cat)));
     }
+    cat.warn_aliases(&ui, &opts.names, Verb::Install);
     let parts = cat.resolve(&opts.names).map_err(|Unknown::Name(n)| {
         Exit::Usage(format!("unknown part or profile: {n}\n{}", listing(cat)))
     })?;
@@ -106,19 +194,11 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         ui.say("nothing changed");
         return Ok(());
     }
-    let mut run = Run {
-        cat,
-        ui,
-        store: Store::open()?,
-        sum: Summary::default(),
-        replace: opts.replace,
-        repo,
-        bundle: None,
-        claude: on_path("claude"),
-    };
+    let store = Store::open_migrating(|name| cat.name_of_alias(name))?;
+    let mut run = Run::new(Some(cat), ui, store, opts.replace, repo, None);
     let mut failures: Vec<Exit> = Vec::new();
     for part in &parts {
-        run.ui.say(&part.name);
+        run.ui.say(part.name());
         failures.extend(run.part(part));
     }
     run.sum.print(&run.ui);
@@ -130,13 +210,13 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
 
 impl Run<'_> {
     /// Install one part; every failure is reported and returned.
-    fn part(&mut self, part: &Part) -> Vec<Exit> {
+    pub fn part(&mut self, part: &Part) -> Vec<Exit> {
         let mut failures: Vec<Exit> = Vec::new();
         let mut note = |ui: &Ui, e: Exit| {
-            ui.fail(&format!("{}: {}", part.name, text(&e)));
+            ui.fail(&format!("{}: {}", part.name(), text(&e)));
             failures.push(e);
         };
-        let bin = if part.bin.is_some() {
+        let bin = if part.bin().is_some() {
             match self.binary(part) {
                 Ok(b) => Some(b),
                 Err(e) => {
@@ -149,32 +229,32 @@ impl Run<'_> {
         };
         if let Some(bin) = &bin {
             let repo = self.repo.clone();
-            if let Some(machine) = &part.machine {
+            if let Some(machine) = part.machine() {
                 if let Err(e) = self.integrate(part, Level::Machine, None, bin, machine) {
                     note(&self.ui, e);
                 }
             }
-            if let (Some(r), Some(repo)) = (&part.repo_level, repo) {
+            if let (Some(r), Some(repo)) = (part.repo_level(), repo) {
                 if let Err(e) = self.integrate(part, Level::Repo, Some(&repo), bin, r) {
                     note(&self.ui, e);
                 }
             }
         }
-        if !part.skills.is_empty() || !part.agents.is_empty() {
+        if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
             if let Err(e) = self.place_skills(part) {
                 note(&self.ui, e);
             }
         }
-        if let Some(w) = &part.workflow {
-            if let Err(e) = self.workflow(part, w) {
+        for file in &part.repo_file {
+            if let Err(e) = self.repo_file(part, file) {
                 note(&self.ui, e);
             }
         }
-        if let Some(h) = &part.hint {
-            self.ui.warn(&format!("{}: {h}", part.name));
+        if let Some(h) = part.hint() {
+            self.ui.warn(&format!("{}: {h}", part.name()));
         }
-        if part.extension.is_some() {
-            let msg = format!("{} is an extension that is not published yet", part.name);
+        if !part.is_published() {
+            let msg = format!("{} is an extension that is not published yet", part.name());
             self.sum.gap(&msg, "grh install again once it is published");
             note(&self.ui, Exit::Unpublished(msg));
         }
@@ -184,12 +264,12 @@ impl Run<'_> {
     /// The part's binary: the receipt's, else one on PATH (adopted), else
     /// fetched and placed.
     fn binary(&mut self, part: &Part) -> Result<PathBuf, Exit> {
-        let (Some(name), Some(repo), Some(version)) = (&part.bin, &part.repo, &part.version) else {
-            return Err(Exit::Failed(format!("{} names no binary", part.name)));
+        let Some(name) = part.bin() else {
+            return Err(Exit::Failed(format!("{} names no binary", part.name())));
         };
-        if let Some((path, placed)) = recorded_bin(&self.store.receipt, &part.name) {
+        if let Some((path, placed)) = recorded_bin(&self.store.receipt, part) {
             let done = self.store.receipt.entries.iter().any(|e| {
-                e.part == part.name
+                part.answers_to(&e.part)
                     && matches!(
                         e.kind,
                         Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
@@ -212,7 +292,7 @@ impl Run<'_> {
                 return Ok(path);
             }
             self.store.remove_where(|e| {
-                e.part == part.name
+                part.answers_to(&e.part)
                     && matches!(
                         e.kind,
                         Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
@@ -222,7 +302,7 @@ impl Run<'_> {
         if let Some(found) = dispatch::find(name) {
             let path = absolute(&found);
             let idx = self.store.begin(Entry::machine(
-                &part.name,
+                part.name(),
                 Kind::BinaryAdopted {
                     path: path.to_string_lossy().into_owned(),
                 },
@@ -231,18 +311,29 @@ impl Run<'_> {
             self.ui.ok(&format!("{name}: adopted {}", path.display()));
             return Ok(path);
         }
+        let Some(release) = part.release() else {
+            return Err(Exit::Failed(format!(
+                "{name} is not on PATH and {} names no release to fetch it from",
+                part.name()
+            )));
+        };
+        let (repo, version) = (&release.repo, &release.version);
+        let keep_binary = part
+            .keep_binary()
+            .map(|spec| Box::new(RecordedKeepBinary::from(spec)));
         let dir = dispatch::bin_dir().map(|d| absolute(&d)).ok_or_else(|| {
             Exit::Failed("cannot find a bin directory: set HOME or GRH_BIN_DIR".into())
         })?;
         let idx = self.store.begin(Entry::machine(
-            &part.name,
+            part.name(),
             Kind::BinaryPlaced {
                 path: dir.join(name).to_string_lossy().into_owned(),
                 sha256: String::new(),
+                keep_binary: keep_binary.clone(),
             },
         ))?;
         self.ui.say(&format!("  fetching {name} {version}"));
-        let placed = match install_binary(repo, name, version, &part.sha256, &dir) {
+        let placed = match install_binary(repo, name, version, &release.sha256, &dir) {
             Ok(p) => p,
             Err(e) => {
                 // Nothing was written: the pending step did not happen.
@@ -254,6 +345,7 @@ impl Run<'_> {
         self.store.receipt.entries[idx].kind = Kind::BinaryPlaced {
             path: placed.path.to_string_lossy().into_owned(),
             sha256: placed.sha256,
+            keep_binary,
         };
         self.store.done(idx)?;
         self.ui
@@ -268,7 +360,7 @@ impl Run<'_> {
             return Ok(None);
         };
         let found = self.store.receipt.entries.iter().position(|e| {
-            e.part == part.name
+            part.answers_to(&e.part)
                 && e.state == State::Pending
                 && matches!(&e.kind, Kind::BinaryPlaced { path, .. }
                     if Path::new(path).starts_with(&bin_root) && Path::new(path).is_file())
@@ -276,15 +368,19 @@ impl Run<'_> {
         let Some(idx) = found else {
             return Ok(None);
         };
-        let Kind::BinaryPlaced { path, .. } = &self.store.receipt.entries[idx].kind else {
+        let Kind::BinaryPlaced {
+            path, keep_binary, ..
+        } = &self.store.receipt.entries[idx].kind
+        else {
             return Ok(None);
         };
-        let path = path.clone();
+        let (path, keep_binary) = (path.clone(), keep_binary.clone());
         let bytes =
             std::fs::read(&path).map_err(|e| Exit::Failed(format!("cannot read {path}: {e}")))?;
         self.store.receipt.entries[idx].kind = Kind::BinaryPlaced {
             path: path.clone(),
             sha256: sha256_hex(&bytes),
+            keep_binary,
         };
         self.store.done(idx)?;
         Ok(Some(PathBuf::from(path)))
@@ -297,33 +393,41 @@ impl Run<'_> {
         level: Level,
         repo: Option<&Path>,
         bin: &Path,
-        integ: &Integration,
+        integ: &ToolLevel,
     ) -> Result<(), Exit> {
         let which = if level == Level::Machine {
             "machine"
         } else {
             "repo"
         };
-        let name = &part.name;
-        // Every machine-level integration is a Claude Code one (an MCP server,
-        // a hook, a plugin): without `claude` it cannot be placed or queried,
-        // and saying so beats reporting its state as unknown.
-        if level == Level::Machine && !self.claude {
+        let name = part.name();
+        // A host command the level needs (a CLI it registers with) must be
+        // on PATH: without it the level can be neither placed nor queried.
+        if let Some(missing) = integ.requires.iter().find(|c| !on_path(c)) {
             self.sum.gap(
-                &format!("{name}: claude is not on PATH, so its Claude Code integration was not installed"),
-                &format!("install Claude Code, then grh install {name}"),
+                &format!(
+                    "{name}: {missing} is not on PATH, so its {which} integration was not installed"
+                ),
+                &if level == Level::Repo {
+                    format!(
+                        "install {missing}, then grh install {name} --repo, from the repository"
+                    )
+                } else {
+                    format!("install {missing}, then grh install {name}")
+                },
             );
-            self.ui
-                .warn(&format!("{name}: claude not found, integration skipped"));
+            self.ui.warn(&format!(
+                "{name}: {missing} not found, {which} integration skipped"
+            ));
             return Ok(());
         }
-        let answer = owner::query(&integ.query, bin, repo);
+        let answer = owner::level_state(integ, bin, repo);
         match answer {
             Answer::Unknown => {
                 self.sum.gap(
                     &format!(
                         "{name}: the {which} integration state is unknown ({}); left alone",
-                        integ.query
+                        status_command(part, integ)
                     ),
                     &format!("check the tool, then grh install {name}"),
                 );
@@ -333,7 +437,7 @@ impl Run<'_> {
             }
             Answer::Present => {
                 let known = self.store.receipt.entries.iter().any(|e| {
-                    same_scope(e, name, level, repo)
+                    same_scope(e, part, level, repo)
                         && matches!(e.kind, Kind::ToolInstall { .. } | Kind::ToolInstallAdopted)
                         && e.state == State::Done
                 });
@@ -344,7 +448,7 @@ impl Run<'_> {
                 }
                 // A step an earlier run left pending, now confirmed present.
                 let pending = self.store.receipt.entries.iter().position(|e| {
-                    same_scope(e, name, level, repo)
+                    same_scope(e, part, level, repo)
                         && matches!(e.kind, Kind::ToolInstall { .. } | Kind::ToolInstallAdopted)
                         && e.state == State::Pending
                 });
@@ -370,7 +474,7 @@ impl Run<'_> {
                     // Partial is installed by someone else unless a done
                     // ToolInstall says grh placed this scope.
                     let ours = self.store.receipt.entries.iter().any(|e| {
-                        same_scope(e, name, level, repo)
+                        same_scope(e, part, level, repo)
                             && matches!(e.kind, Kind::ToolInstall { .. })
                             && e.state == State::Done
                     });
@@ -382,13 +486,13 @@ impl Run<'_> {
                             &format!("finish or remove it with {name}'s own commands, then grh install {name}"),
                         );
                         self.ui.warn(&format!(
-                            "{name}: {which} integration partial, adopted gap, not touched"
+                            "{name}: {which} integration partial, partly installed by someone else, left alone"
                         ));
                         return Ok(());
                     }
                 }
                 self.store.remove_where(|e| {
-                    same_scope(e, name, level, repo)
+                    same_scope(e, part, level, repo)
                         && matches!(e.kind, Kind::ToolInstall { .. } | Kind::ToolInstallAdopted)
                 })?;
                 let argv = subst(&integ.install, bin);
@@ -396,6 +500,7 @@ impl Run<'_> {
                 let kind = Kind::ToolInstall {
                     argv: argv.clone(),
                     undo_argv,
+                    status: integ.status.as_ref().map(RecordedStatus::from),
                 };
                 let entry = match repo {
                     Some(r) => Entry::in_repo(name, r, kind),
@@ -403,7 +508,7 @@ impl Run<'_> {
                 };
                 let idx = self.store.begin(entry)?;
                 let code = run_tool(&self.ui, &argv, repo).map_err(Exit::Failed)?;
-                if owner::query(&integ.query, bin, repo) == Answer::Present {
+                if owner::level_state(integ, bin, repo) == Answer::Present {
                     self.store.done(idx)?;
                     self.ui
                         .ok(&format!("{name}: {which} integration installed"));
@@ -413,7 +518,7 @@ impl Run<'_> {
                     // uninstall will run the undo and check.
                     Err(Exit::Failed(format!(
                         "{} exited {code} and the {which} integration is not confirmed present",
-                        argv.join(" ")
+                        command_line(&argv)
                     )))
                 }
             }
@@ -422,7 +527,10 @@ impl Run<'_> {
 
     fn place_skills(&mut self, part: &Part) -> Result<(), Exit> {
         if self.bundle.is_none() {
-            self.bundle = Some(Bundle::fetch(self.cat).map_err(|e| text(&e)));
+            self.bundle = Some(match self.cat {
+                Some(cat) => Bundle::fetch(cat).map_err(|e| text(&e)),
+                None => Err(format!("{} names no skills bundle to fetch", part.name())),
+            });
         }
         let bundle = match &self.bundle {
             Some(Ok(b)) => b,
@@ -431,7 +539,7 @@ impl Run<'_> {
         };
         let claude = skills::claude_dir()?;
         let placement = skills::place(bundle, part, &claude, &mut self.store, self.replace)?;
-        let name = &part.name;
+        let name = part.name();
         self.ui.ok(&format!(
             "{name}: {} skill and agent files in {}",
             placement.placed.len(),
@@ -456,27 +564,28 @@ impl Run<'_> {
         Ok(())
     }
 
-    fn workflow(&mut self, part: &Part, kind: &str) -> Result<(), Exit> {
-        if kind != "attest" {
-            return Err(Exit::Failed(format!("unknown workflow {kind}")));
-        }
+    /// Place a file the manifest lists in the repository: in the first of its
+    /// `dirs` that exists, else the last.
+    fn repo_file(&mut self, part: &Part, file: &RepoFile) -> Result<(), Exit> {
         let Some(repo) = self.repo.clone() else {
             self.sum.gap(
                 &format!(
-                    "{}: the CI workflow is written inside a repository",
-                    part.name
+                    "{}: {} is written inside a repository",
+                    part.name(),
+                    file.path
                 ),
-                "grh install attest --repo, from the repository",
+                &format!("grh install {} --repo, from the repository", part.name()),
             );
             return Ok(());
         };
-        let dir = if repo.join(".forgejo").is_dir() {
-            ".forgejo"
-        } else {
-            ".github"
-        };
-        let path = repo.join(dir).join("workflows/attest.yml");
-        let bytes = ATTEST_WORKFLOW.as_bytes();
+        let dir = file
+            .dirs
+            .iter()
+            .find(|d| repo.join(d).is_dir())
+            .or(file.dirs.last())
+            .ok_or_else(|| Exit::Failed(format!("{} lists no directory", file.path)))?;
+        let path = place_inside(&repo, dir, &file.path)?;
+        let bytes = file.content.as_bytes();
         let new_sha = sha256_hex(bytes);
         let want = path.to_string_lossy().into_owned();
         let recorded = self
@@ -498,7 +607,10 @@ impl Run<'_> {
                     // Identical bytes do not make it ours: someone else placed it.
                     self.sum.skip(
                         &format!("{want}: exists and grh did not place it"),
-                        "leave it, or remove it and grh install attest --repo",
+                        &format!(
+                            "leave it, or remove it and grh install {} --repo",
+                            part.name()
+                        ),
                     );
                     return Ok(());
                 }
@@ -507,7 +619,7 @@ impl Run<'_> {
                 if !self.replace {
                     self.sum.skip(
                         &format!("{want}: exists and grh did not place it"),
-                        "grh install attest --repo --replace",
+                        &format!("grh install {} --repo --replace", part.name()),
                     );
                     return Ok(());
                 }
@@ -521,9 +633,9 @@ impl Run<'_> {
                     .join("backup")
                     .join(ts.to_string())
                     .join(dir)
-                    .join("workflows/attest.yml");
+                    .join(&file.path);
                 let idx = self.store.begin(Entry::in_repo(
-                    &part.name,
+                    part.name(),
                     &repo,
                     Kind::Backup {
                         path: to.to_string_lossy().into_owned(),
@@ -534,18 +646,18 @@ impl Run<'_> {
                 self.store.done(idx)?;
                 self.sum.backup(
                     &format!("{want} was backed up to {}", to.display()),
-                    "grh uninstall attest restores it",
+                    &format!("grh uninstall {} restores it", part.name()),
                 );
             }
         }
         if !write && recorded.as_deref() == Some(new_sha.as_str()) {
-            self.ui.ok(&format!("{}: {want} (unchanged)", part.name));
+            self.ui.ok(&format!("{}: {want} (unchanged)", part.name()));
             return Ok(());
         }
         self.store
             .remove_where(|e| matches!(&e.kind, Kind::File { path, .. } if *path == want))?;
         let idx = self.store.begin(Entry::in_repo(
-            &part.name,
+            part.name(),
             &repo,
             Kind::File {
                 path: want.clone(),
@@ -556,7 +668,52 @@ impl Run<'_> {
             write_atomic(&path, bytes, 0o644)?;
         }
         self.store.done(idx)?;
-        self.ui.ok(&format!("{}: wrote {want}", part.name));
+        self.ui.ok(&format!("{}: wrote {want}", part.name()));
         Ok(())
+    }
+}
+
+/// The command a level's `status` runs, as the person would type it
+/// (`<bin> <args>`), or `<bin>: no status declared` when the level has none.
+fn status_command(part: &Part, level: &ToolLevel) -> String {
+    let bin = part.bin().unwrap_or_default();
+    match &level.status {
+        Some(status) => {
+            let mut argv = vec![bin.to_string()];
+            argv.extend(status.args.iter().cloned());
+            command_line(&argv)
+        }
+        None => format!("{bin}: no status declared"),
+    }
+}
+
+/// `<repo>/<dir>/<rel>`, refused unless both parts are relative and stay
+/// inside, and the deepest part of it that exists resolves, symlinks
+/// followed, to somewhere under the repository's real path.
+fn place_inside(repo: &Path, dir: &str, rel: &str) -> Result<PathBuf, Exit> {
+    let refuse = |what: &str| {
+        Exit::Failed(format!(
+            "{dir}/{rel}: {what}; a repository file is written only inside the repository"
+        ))
+    };
+    if !stays_inside(dir) || !stays_inside(rel) {
+        return Err(refuse("the path is not relative or leaves the repository"));
+    }
+    let root = std::fs::canonicalize(repo)
+        .map_err(|e| Exit::Failed(format!("cannot resolve {}: {e}", repo.display())))?;
+    let target = repo.join(dir).join(rel);
+    let mut probe = target.as_path();
+    loop {
+        if std::fs::symlink_metadata(probe).is_ok() {
+            let real = std::fs::canonicalize(probe)
+                .map_err(|_| refuse("a link on the path does not resolve"))?;
+            if real.starts_with(&root) {
+                return Ok(target);
+            }
+            return Err(refuse("a link on the path points outside the repository"));
+        }
+        probe = probe
+            .parent()
+            .ok_or_else(|| refuse("no part of the path exists"))?;
     }
 }
