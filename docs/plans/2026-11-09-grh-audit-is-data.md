@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/audit-is-data
 repos: [grh]
 adrs: [ADR-0064]
@@ -11,7 +11,7 @@ adrs: [ADR-0064]
 📄 Full reviews: [2026-11-09-grh-audit-is-data.reviews.md](2026-11-09-grh-audit-is-data.reviews.md)
 
 👉 **Decide:** none — approve if audit's rules living in the manifests, profiles gone with a hint, and `--all` is the right second slice of step 2.
-📍 grh · nothing built · next: Phase 1, the golden audit outputs from 0.2.0. Panel: backend, lang:rust, platform, unix, tui, architect, po (all opus).
+📍 grh · Phases 1–7 built and verified · next: land, merge, tag v0.3.0, then the day-7 outcome check. Panel: backend, lang:rust, platform, unix, tui, architect, po (all opus).
 **Changed by review:** signals name their level; reasons and warnings are templates with a fixed placeholder list; path lists move to catalog data; goldens run under a stub PATH; `--all` needs `--yes` off a terminal.
 **Verdicts:** round 2 approve 2 (tui, architect), approve-with-changes 5; 0 rework; 12 findings carried into implementation (listed in the full reviews).
 
@@ -151,28 +151,28 @@ to every source file. The interactive checklist that replaces a bare
 
 ## Phases
 
-- [ ] Phase 1 — golden audit outputs from the 0.2.0 binary, before any
+- [x] Phase 1 — golden audit outputs from the 0.2.0 binary, before any
   change, under a scratch HOME and stub PATH: `tests/fixtures/audit/`,
   `tests/audit_golden.rs`.
-- [ ] Phase 2 — manifest `[[recommend]]` and `[[conflict]]`, the placeholder
+- [x] Phase 2 — manifest `[[recommend]]` and `[[conflict]]`, the placeholder
   list, `HARNESS_VERSION` 0.3 with `uses_v3()`, validation of signals and
   `when`: `src/manifest.rs`, `docs/extension-manifest.md`.
-- [ ] Phase 3 — the catalog carries each part's rules and conflicts, the
+- [x] Phase 3 — the catalog carries each part's rules and conflicts, the
   `[audit]` path lists, `foreign_markers` and `retired_names`, and every part
   moves to `harness = ">=0.3"`: `catalog.toml`, `src/catalog.rs`.
-- [ ] Phase 4 — audit reads the rules: signals, rule evaluation, placeholders,
+- [x] Phase 4 — audit reads the rules: signals, rule evaluation, placeholders,
   the new output shape and quiet broken pipe: `src/audit.rs`,
   `src/skills.rs`, `tests/cli.rs`.
-- [ ] Phase 5 — profiles removed, `--all`, the retired-name error, help from
+- [x] Phase 5 — profiles removed, `--all`, the retired-name error, help from
   the catalog (`grh uninstall solo` gives the same error; "or profile"
   leaves the errors and the help text): `src/install.rs`, `src/uninstall.rs`,
   `src/ops.rs`, `src/main.rs`, `src/catalog.rs`, `catalog.toml`,
   `tests/cli.rs`, `scripts/e2e.sh`.
-- [ ] Phase 6 — the widened name check, `extension.rs`'s reworded messages,
+- [x] Phase 6 — the widened name check, `extension.rs`'s reworded messages,
   and its CI step (`no part names`, running `cargo test --test
   no_part_names`, before `cargo test` in the `rust` job):
   `tests/no_part_names.rs`, `src/extension.rs`, `.github/workflows/ci.yaml`.
-- [ ] Phase 7 — docs and release 0.3.0: `README.md`, `CHANGELOG.md`,
+- [x] Phase 7 — docs and release 0.3.0: `README.md`, `CHANGELOG.md`,
   `Cargo.toml`, `Cargo.lock`.
 
 ## Decision log
@@ -189,7 +189,58 @@ to every source file. The interactive checklist that replaces a bare
   green before the profiles go; the person-visible removal lands in the same
   release.
 
+- 2026-11-09 — the `decisions` row reads `machine_present` instead of
+  0.2.0's `claude mcp get aval` probe; the aval_mcp_registered golden shows
+  no verdict change, so no stop for the person was needed.
+- 2026-11-09 — `"schema": 2` and the quiet broken pipe ship in 0.3.0: the
+  output path is rewritten anyway, and the marker is the only way a consumer
+  can detect the breaking JSON shape.
+- 2026-11-09 — `bundle_needs_binary` is replaced by one rule in `Run::part`:
+  a part whose binary is missing places neither skills nor repo files (a
+  named install used to place skills that pointed at no tool; proven red).
+- 2026-11-09 — implementation review (round 1 + Delta) changed the
+  contract: conflict kinds are a typed enum, a `foreign_hooks` conflict
+  takes no text, placeholders are checked per context, the JSON `signals`
+  map holds repository facts only, and an empty `[audit]` list is refused
+  when a rule uses it.
+- 2026-11-09 — carried, outside this plan: `grh uninstall --all` (the
+  author's call; uninstall by name works); `status.rs` still uses
+  `println!`; `--extension` manifests' rules are not evaluated by `grh
+  audit` (plan 2d); the Delta's low findings below go to plan 2c, which
+  reworks install's output.
+
 ## Verification
+
+Observed on the finished tree (2026-11-09):
+
+- Phase 1: 13 goldens recorded by the 0.2.0 binary under a scratch HOME and
+  the stub PATH; `tests/audit_golden.rs` replays them → green, no harness
+  tool needed.
+- Phase 2: `bad_rules_are_refused` covers each refusal (unknown signal, a
+  part name in `when`, unknown and out-of-context placeholders, a level
+  signal with no status, harness `>=0.2`, conflict kinds, foreign_hooks
+  text) → green.
+- Phase 3: `Catalog::checked` passes on the shipped catalog; every part
+  declares `>=0.3`; a path signal with an empty `[audit]` list is refused →
+  green.
+- Phase 4: every golden row's verdict and reason, every warning, `hooks`,
+  `ci`, `adr_folder`, `languages` and `dir` reproduced under the new names;
+  `install` matches `expected-new.json`; `grh audit | head -1` exits 0 →
+  green.
+- Phase 5: retired names exit 2 with the hint (install, uninstall, mixed);
+  `--all </dev/null` exits 2 naming the flags given; `--all` with a failing
+  need exits 1, skips its dependent, and a rerun leaves the receipt
+  unchanged; bare `grh install` lists parts and names `--all` → green.
+- Phase 6: the widened check flagged 3 literals on the Phase 5 tree (two
+  `conform eslint` messages, one "Claude config directory"), reworded; the
+  probe test catches `"Aval"` and `"claude"` outside the host files → green.
+- Phase 7: full suite (146 tests), clippy `-D warnings`, fmt → green;
+  `scripts/e2e.sh` against the real releases → exit 0; the README quickstart
+  in a scratch repo → each command exits as documented; 0.2.0 reads a
+  receipt 0.3.0 wrote → `grh status` exit 0, 0 `unknown`;
+  `scripts/outcome-diff.sh` 0.2.0 vs 0.3.0 over ~/Developer/Perso → 0
+  verdict differences, 0 `unknown` (repositories where both versions fail
+  alike, worktrees removed mid-run, are not counted).
 
 - Phase 1: the golden files are produced by the installed 0.2.0 build (its
   `--json`) for the eight fixtures, under a scratch HOME and a PATH of stub
@@ -227,6 +278,14 @@ to every source file. The interactive checklist that replaces a bare
   each README quickstart command is run in a scratch repository and exits 0;
   `grh audit` in a scratch repository with amont installed gives the 0.2.0
   rows under the new names.
+
+## Implementation review
+
+- implementation-review: approve-with-changes → Delta approve; tautological name-check assertion fixed; deliberate: `part_facts` loop shadowing (low, carried to 2c); 44k/24 s + 43k/24 s.
+- backend approve-with-changes → approve; unknown status warns, git config failure warns, rerun test added; carried: a test for the git-config failure path; 66k/66 s + 36k/14 s.
+- lang:rust approve-with-changes → approve-with-changes; ConflictWhen enum, per-context placeholders, stderr without panic; deliberate: `Selection` enum (exclusivity tested), `Vec<Level>` for unknown levels (low, 2c); 54k/56 s + 36k/27 s.
+- tui approve-with-changes → approve-with-changes; failure line, listing, retired hint, `--repo` help reworded; carried to 2c: 80-column wrapping of two messages, warning wording; 52k/54 s + 36k/20 s.
+- architect approve-with-changes → approve-with-changes; foreign_hooks, signals scope, empty lists fixed; carried: one signal-classification method on `Signal`, a shared git helper (low); platform approve, unix approve (rerun keeps `--quiet`, rows trimmed); 56k/77 s + 36k/21 s, 32k/21 s, 54k/66 s.
 
 ## Outcome
 
