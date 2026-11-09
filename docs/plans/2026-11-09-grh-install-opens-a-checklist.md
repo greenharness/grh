@@ -176,7 +176,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
   `draw(frame, &model)`; ratatui 0.30 and crossterm 0.29: `src/checklist.rs`,
   `src/main.rs` (module), `Cargo.toml`, `Cargo.lock`, `deny.toml` if a new
   licence appears. Record the release binary size and build time before and after.
-- [ ] Phase 4 — wiring: the terminal check, an inline viewport, raw mode
+- [x] Phase 4 — wiring: the terminal check, an inline viewport, raw mode
   with restore on every path and a panic hook, the printed command, then
   `install::run`; raw mode, viewport and panic hook live in `src/checklist.rs`, and `install.rs` only calls it at the bare-install branch with no ratatui or crossterm import; off a terminal unchanged: `src/install.rs`, `src/ops.rs`,
   `src/main.rs`, `tests/cli.rs`, `tests/pty.rs`, `Cargo.toml` (dev-dependency

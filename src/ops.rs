@@ -148,6 +148,8 @@ pub fn text(e: &Exit) -> String {
         | Exit::NotInstalled(m)
         | Exit::Locked(m) => m.clone(),
         Exit::Interrupted => "interrupted".into(),
+        Exit::Terminated => "terminated".into(),
+        Exit::HungUp => "hung up".into(),
     }
 }
 

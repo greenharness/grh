@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::audit;
 use crate::catalog::{Catalog, Part, Unknown, Verb};
+use crate::checklist;
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
@@ -14,7 +16,7 @@ use crate::ops::{
 };
 use crate::owner::{self, Answer};
 use crate::receipt::{
-    write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
+    self, write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
 };
 use crate::skills::{self, Bundle};
 
@@ -179,6 +181,47 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     }
 }
 
+/// A bare `grh install` on a terminal: the checklist, then the install it
+/// stands for, run as if typed.
+fn choose_and_run(cat: &Catalog, opts: &Opts, ui: &Ui) -> Result<(), Exit> {
+    let assessment = audit::assess(cat, None)?;
+    let mut receipt = receipt::read_in(&receipt::state_dir()?)?;
+    receipt.rename_parts(|name| cat.name_of_alias(name));
+    let installed: Vec<String> = receipt.entries.iter().map(|e| e.part.clone()).collect();
+    let model = checklist::Checklist::new(cat, assessment.as_ref(), &installed);
+    match checklist::open(model)? {
+        checklist::Opened::Unavailable => Err(Exit::Usage(listing(cat))),
+        checklist::Opened::TooSmall => Err(Exit::Usage(format!(
+            "{}\n{}",
+            checklist::TOO_SMALL,
+            listing(cat)
+        ))),
+        checklist::Opened::Cancelled => {
+            ui.say("nothing changed");
+            Ok(())
+        }
+        checklist::Opened::Confirmed { parts, repo } => {
+            eprintln!(
+                "grh install {}{}",
+                parts.join(" "),
+                if repo { " --repo" } else { "" }
+            );
+            run(
+                cat,
+                &Opts {
+                    names: parts,
+                    all: false,
+                    repo,
+                    replace: opts.replace,
+                    dry_run: opts.dry_run,
+                    yes: false,
+                    quiet: opts.quiet,
+                },
+            )
+        }
+    }
+}
+
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     if let Some(notice) = cat.retired_notice(&opts.names, Verb::Install) {
         return Err(Exit::Usage(notice));
@@ -190,6 +233,9 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
     let ui = Ui::new(opts.quiet);
     if opts.names.is_empty() && !opts.all {
+        if !opts.yes && checklist::terminal_available() {
+            return choose_and_run(cat, opts, &ui);
+        }
         return Err(Exit::Usage(listing(cat)));
     }
     cat.warn_aliases(&ui, &opts.names, Verb::Install);

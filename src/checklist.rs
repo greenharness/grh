@@ -1,15 +1,28 @@
-//! The install checklist: a pure model of the lines and their ticks, and its
-//! ratatui rendering. No terminal I/O lives here yet.
+//! The install checklist: a pure model of the lines and their ticks, its
+//! ratatui rendering, and the terminal session that runs it: raw mode, an
+//! inline viewport on stderr, and the restore on every way out.
 
 use crate::audit::Assessment;
 use crate::catalog::Catalog;
+use crate::exit::Exit;
 use crate::manifest::Verdict;
+use crate::ops::use_color;
+use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
+use ratatui::backend::CrosstermBackend;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, Paragraph, Widget};
-use ratatui::Frame;
+use ratatui::{Frame, Terminal, TerminalOptions, Viewport};
+use signal_hook::consts::{SIGHUP, SIGTERM};
+use signal_hook::flag;
+use signal_hook::SigId;
+use std::io::{IsTerminal, Stderr};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
 
 const KEYS_LINE: &str = "j/k move  space tick  enter review  q cancel";
 const HEADER_TITLE: &str = "Choose what to install";
@@ -22,6 +35,12 @@ const UNPUBLISHED_STATE: &str = "not published yet";
 const NOTHING_TICKED: &str = "nothing ticked";
 const CURSOR: &str = "> ";
 const NO_CURSOR: &str = "  ";
+const MIN_ROWS: u16 = 8;
+const MIN_COLUMNS: u16 = 40;
+const SIGNAL_POLL: Duration = Duration::from_millis(50);
+/// Printed before the part listing when the terminal is too small to open in.
+pub const TOO_SMALL: &str =
+    "terminal too small for the checklist (needs 8 rows, 40 columns): enlarge it or name the parts";
 const BOX_WIDTH: usize = 4;
 const STATE_GAP: usize = 2;
 
@@ -417,6 +436,35 @@ fn visible_rows(
         .collect()
 }
 
+fn body_rows(model: &Checklist, width: usize, colour: bool) -> Vec<Vec<Line<'static>>> {
+    let all = entries(model);
+    let name_width = all
+        .iter()
+        .filter(|entry| !entry.summary.is_empty())
+        .map(|entry| entry.name.chars().count())
+        .max()
+        .unwrap_or(0);
+    all.iter()
+        .map(|entry| entry_rows(entry, name_width, width, colour))
+        .collect()
+}
+
+fn audited_text(model: &Checklist) -> &'static str {
+    if model.repo.is_some() {
+        HEADER_AUDITED
+    } else {
+        HEADER_UNAUDITED
+    }
+}
+
+/// How many rows the whole checklist wants at `width` columns: the header,
+/// every entry and the footer.
+fn wanted_height(model: &Checklist, width: usize) -> usize {
+    let header = 1 + wrap_words(audited_text(model), width, width).len();
+    let body: usize = body_rows(model, width, false).iter().map(Vec::len).sum();
+    header + body + 1
+}
+
 /// Draw the checklist into `frame`; `colour` adds named ANSI colours, never
 /// meaning: every state is also a word or a glyph.
 pub fn draw(frame: &mut Frame<'_>, model: &Checklist, colour: bool) {
@@ -427,11 +475,7 @@ pub fn draw(frame: &mut Frame<'_>, model: &Checklist, colour: bool) {
 fn render(area: Rect, buffer: &mut Buffer, model: &Checklist, colour: bool) {
     let width = usize::from(area.width);
     Clear.render(area, buffer);
-    let audited = if model.repo.is_some() {
-        HEADER_AUDITED
-    } else {
-        HEADER_UNAUDITED
-    };
+    let audited = audited_text(model);
     let mut header: Vec<Line<'static>> = vec![Line::from(Span::styled(
         HEADER_TITLE.to_string(),
         Style::default().add_modifier(Modifier::BOLD),
@@ -466,17 +510,7 @@ fn render(area: Rect, buffer: &mut Buffer, model: &Checklist, colour: bool) {
     if body_height == 0 {
         return;
     }
-    let all = entries(model);
-    let name_width = all
-        .iter()
-        .filter(|entry| !entry.summary.is_empty())
-        .map(|entry| entry.name.chars().count())
-        .max()
-        .unwrap_or(0);
-    let rows: Vec<Vec<Line<'static>>> = all
-        .iter()
-        .map(|entry| entry_rows(entry, name_width, width, colour))
-        .collect();
+    let rows = body_rows(model, width, colour);
     let shown = visible_rows(&rows, model.cursor, usize::from(body_height));
     let body = Rect {
         y: area.y + header_rows,
@@ -484,6 +518,228 @@ fn render(area: Rect, buffer: &mut Buffer, model: &Checklist, colour: bool) {
         ..area
     };
     Paragraph::new(shown).render(body, buffer);
+}
+
+/// What opening the checklist came to, short of an exit.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Opened {
+    /// The terminal cannot host it (the cursor read failed): show the listing.
+    Unavailable,
+    /// Under 8 rows or 40 columns: say so, then show the listing.
+    TooSmall,
+    Confirmed {
+        parts: Vec<String>,
+        repo: bool,
+    },
+    Cancelled,
+}
+
+/// Whether the checklist may open at all: stdin, stdout and stderr are
+/// terminals and `TERM` is not `dumb`.
+pub fn terminal_available() -> bool {
+    std::io::stdin().is_terminal()
+        && std::io::stdout().is_terminal()
+        && std::io::stderr().is_terminal()
+        && std::env::var("TERM").map_or(true, |term| term != "dumb")
+}
+
+/// SIGTERM and SIGHUP as flags the event loop polls. Dropping it unregisters
+/// the flag actions and arms the default action, so a signal after the
+/// checklist (at `Proceed?`, during the install) ends grh as it would have.
+#[derive(Debug)]
+struct Signals {
+    terminated: Arc<AtomicBool>,
+    hung_up: Arc<AtomicBool>,
+    default_action: Arc<AtomicBool>,
+    flag_ids: Vec<SigId>,
+}
+
+impl Signals {
+    fn register() -> Result<Signals, Exit> {
+        let terminated = Arc::new(AtomicBool::new(false));
+        let hung_up = Arc::new(AtomicBool::new(false));
+        let default_action = Arc::new(AtomicBool::new(false));
+        let mut flag_ids = Vec::new();
+        for (signal, seen) in [(SIGTERM, &terminated), (SIGHUP, &hung_up)] {
+            // Registered first, so it runs first: a no-op until `default_action` is set.
+            flag::register_conditional_default(signal, Arc::clone(&default_action))
+                .map_err(|e| signal_error(&e))?;
+            flag_ids.push(flag::register(signal, Arc::clone(seen)).map_err(|e| signal_error(&e))?);
+        }
+        Ok(Signals {
+            terminated,
+            hung_up,
+            default_action,
+            flag_ids,
+        })
+    }
+
+    fn pending(&self) -> Option<Exit> {
+        if self.hung_up.load(Ordering::Relaxed) {
+            Some(Exit::HungUp)
+        } else if self.terminated.load(Ordering::Relaxed) {
+            Some(Exit::Terminated)
+        } else {
+            None
+        }
+    }
+}
+
+impl Drop for Signals {
+    fn drop(&mut self) {
+        self.default_action.store(true, Ordering::Relaxed);
+        for id in self.flag_ids.drain(..) {
+            signal_hook::low_level::unregister(id);
+        }
+    }
+}
+
+fn signal_error(error: &std::io::Error) -> Exit {
+    Exit::Failed(format!("cannot watch for signals: {error}"))
+}
+
+/// Puts the terminal back: raw mode off, cursor shown. Runs on every way out.
+#[derive(Debug)]
+struct RestoreGuard {
+    /// True while the checklist holds the terminal; the panic hook restores only then.
+    holding: Arc<AtomicBool>,
+}
+
+fn restore_terminal() {
+    let _ = disable_raw_mode(); // best effort: a failed restore, EIO after a hang-up, leaves nothing to do
+    let _ = crossterm::execute!(std::io::stderr(), crossterm::cursor::Show); // best effort, as above
+}
+
+impl Drop for RestoreGuard {
+    fn drop(&mut self) {
+        self.holding.store(false, Ordering::Relaxed);
+        restore_terminal();
+    }
+}
+
+fn key_of(code: KeyCode, modifiers: KeyModifiers) -> Option<Key> {
+    match code {
+        KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => Some(Key::ControlC),
+        KeyCode::Char(character) => Some(Key::Char(character)),
+        KeyCode::Up => Some(Key::Up),
+        KeyCode::Down => Some(Key::Down),
+        KeyCode::Enter => Some(Key::Enter),
+        KeyCode::Esc => Some(Key::Escape),
+        _ => None,
+    }
+}
+
+fn terminal_error(error: &std::io::Error) -> Exit {
+    Exit::Failed(format!("the terminal failed: {error}"))
+}
+
+/// Open the checklist on the terminal and run it until the person decides.
+/// Call it only when `terminal_available`; it draws on stderr.
+pub fn open(model: Checklist) -> Result<Opened, Exit> {
+    let Ok((columns, rows)) = crossterm::terminal::size() else {
+        return Ok(Opened::Unavailable);
+    };
+    if rows < MIN_ROWS || columns < MIN_COLUMNS {
+        return Ok(Opened::TooSmall);
+    }
+    // Declared first, so dropped last: after the terminal is back.
+    let signals = Signals::register()?;
+    let holding = Arc::new(AtomicBool::new(true));
+    let previous_hook = std::panic::take_hook();
+    let hook_holding = Arc::clone(&holding);
+    std::panic::set_hook(Box::new(move |info| {
+        if hook_holding.load(Ordering::Relaxed) {
+            restore_terminal();
+        }
+        previous_hook(info);
+    }));
+    let guard = RestoreGuard { holding };
+    enable_raw_mode().map_err(|e| terminal_error(&e))?;
+    let height = u16::try_from(wanted_height(&model, usize::from(columns)))
+        .unwrap_or(u16::MAX)
+        .clamp(MIN_ROWS, rows);
+    let Ok(mut terminal) = Terminal::with_options(
+        CrosstermBackend::new(std::io::stderr()),
+        TerminalOptions {
+            viewport: Viewport::Inline(height),
+        },
+    ) else {
+        return Ok(Opened::Unavailable);
+    };
+    let outcome = event_loop(&mut terminal, model, &signals);
+    if !matches!(outcome, Err(Exit::HungUp | Exit::Terminated)) {
+        drain_pending_events();
+    }
+    // The terminal may be gone after a hang-up; the clear is best effort then.
+    let cleared = terminal.clear();
+    drop(terminal);
+    drop(guard);
+    let opened = outcome?;
+    cleared.map_err(|e| terminal_error(&e))?;
+    Ok(opened)
+}
+
+/// Read and drop the keys already waiting, so a held or doubled enter cannot
+/// answer `Proceed?`.
+fn drain_pending_events() {
+    while event::poll(Duration::ZERO).unwrap_or(false) {
+        if event::read().is_err() {
+            break;
+        }
+    }
+}
+
+fn event_loop(
+    terminal: &mut Terminal<CrosstermBackend<Stderr>>,
+    mut model: Checklist,
+    signals: &Signals,
+) -> Result<Opened, Exit> {
+    let colour = use_color(true);
+    loop {
+        if let Some(exit) = signals.pending() {
+            return Err(exit);
+        }
+        let drawn = terminal.draw(|frame| draw(frame, &model, colour));
+        if let Err(error) = drawn {
+            return Err(signals.pending().unwrap_or_else(|| terminal_error(&error)));
+        }
+        loop {
+            if let Some(exit) = signals.pending() {
+                return Err(exit);
+            }
+            match event::poll(SIGNAL_POLL) {
+                Ok(false) => continue,
+                Ok(true) => {}
+                Err(error) => {
+                    return Err(signals.pending().unwrap_or_else(|| terminal_error(&error)));
+                }
+            }
+            let event = match event::read() {
+                Ok(event) => event,
+                Err(error) => {
+                    return Err(signals.pending().unwrap_or_else(|| terminal_error(&error)));
+                }
+            };
+            match event {
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    let Some(key) = key_of(key.code, key.modifiers) else {
+                        continue;
+                    };
+                    match model.on_key(key) {
+                        Action::Stay => {}
+                        Action::Confirm { parts, repo } => {
+                            return Ok(Opened::Confirmed { parts, repo });
+                        }
+                        Action::Cancel => return Ok(Opened::Cancelled),
+                        Action::Interrupt => return Err(Exit::Interrupted),
+                    }
+                    break;
+                }
+                Event::Resize(_, _) => break,
+                _ => {}
+            }
+        }
+    }
 }
 
 #[cfg(test)]

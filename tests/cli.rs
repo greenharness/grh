@@ -429,6 +429,35 @@ fn a_bare_install_lists_parts_and_exits_2() {
     assert!(o.stdout.is_empty());
 }
 
+#[test]
+fn a_bare_install_with_yes_still_lists_parts_and_exits_2() {
+    let fx = Fx::new();
+    let o = fx.grh("work", &[], &["install", "--yes"]);
+    assert_eq!(code(&o), 2);
+    assert!(err(&o).contains("--all"), "{}", err(&o));
+    assert!(o.stdout.is_empty());
+}
+
+#[test]
+fn a_bare_install_with_stdout_in_a_file_leaves_the_file_empty() {
+    let fx = Fx::new();
+    let file = fs::File::create(fx.p("stdout.txt")).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_grh"))
+        .arg("install")
+        .current_dir(fx.p("work"))
+        .env_clear()
+        .env("HOME", fx.p("home"))
+        .env("XDG_STATE_HOME", fx.p("state"))
+        .env("GRH_CATALOG", fx.p("catalog.toml"))
+        .stdin(Stdio::null())
+        .stdout(file)
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 2);
+    assert!(err(&o).contains("--all"), "{}", err(&o));
+    assert_eq!(fs::read_to_string(fx.p("stdout.txt")).unwrap(), "");
+}
+
 fn out(o: &Output) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }

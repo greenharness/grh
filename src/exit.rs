@@ -1,6 +1,8 @@
 //! grh's exit codes: one table, a public interface. Changing a code is a major
-//! version. grh never picks 126, 127 or 128+n itself; a dispatched part's own
-//! status passes through untouched.
+//! version. 126 and 127 are never chosen; the only 128+n codes grh picks are
+//! the ones for the signals it catches to restore the terminal (SIGINT 130,
+//! SIGTERM 143, SIGHUP 129); a dispatched part's own status passes through
+//! untouched.
 
 use std::process::ExitCode;
 
@@ -18,6 +20,10 @@ pub enum Exit {
     Locked(String),
     /// 130: interrupted.
     Interrupted,
+    /// 143: SIGTERM arrived while the checklist held the terminal.
+    Terminated,
+    /// 129: the terminal hung up (SIGHUP) while the checklist held it.
+    HungUp,
 }
 
 impl Exit {
@@ -29,6 +35,8 @@ impl Exit {
             Exit::NotInstalled(_) => 4,
             Exit::Locked(_) => 5,
             Exit::Interrupted => 130,
+            Exit::Terminated => 143,
+            Exit::HungUp => 129,
         }
     }
 
@@ -51,6 +59,9 @@ impl Exit {
             | Exit::NotInstalled(m)
             | Exit::Locked(m) => eprintln!("grh: {m}"),
             Exit::Interrupted => eprintln!("grh: interrupted"),
+            Exit::Terminated => eprintln!("grh: terminated"),
+            // The terminal is gone: a write to it would fail, so nothing is printed.
+            Exit::HungUp => {}
         }
         ExitCode::from(code)
     }
@@ -68,6 +79,8 @@ mod tests {
         assert_eq!(Exit::NotInstalled(String::new()).code(), 4);
         assert_eq!(Exit::Locked(String::new()).code(), 5);
         assert_eq!(Exit::Interrupted.code(), 130);
+        assert_eq!(Exit::HungUp.code(), 129);
+        assert_eq!(Exit::Terminated.code(), 143);
     }
 
     #[test]
