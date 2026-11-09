@@ -88,10 +88,29 @@ fn language(file: &str) -> &'static str {
     }
 }
 
-struct Row<'a> {
-    part: &'a str,
-    verdict: Verdict,
-    reason: String,
+/// One part's verdict and the reason it gets.
+#[derive(Debug)]
+pub struct Row<'a> {
+    pub part: &'a str,
+    pub verdict: Verdict,
+    pub reason: String,
+}
+
+/// Everything the audit found in one repository; printing it is `run`'s job.
+#[derive(Debug)]
+pub struct Assessment<'a> {
+    pub root: PathBuf,
+    pub languages: BTreeMap<&'static str, usize>,
+    pub rows: Vec<Row<'a>>,
+    pub hooks: Vec<String>,
+    pub warnings: Vec<String>,
+    pub adr_folder: Option<String>,
+    pub ci: Vec<String>,
+    pub signals: BTreeMap<String, bool>,
+    /// Recommended parts that are not experimental, in catalog order.
+    pub install: Vec<&'a str>,
+    /// The published experimental parts, whether recommended or not.
+    pub experimental: Vec<String>,
 }
 
 /// What the audit knows about the repository, before any rule reads it.
@@ -218,12 +237,16 @@ fn print_lines(lines: &[String]) -> Result<(), Exit> {
     Ok(())
 }
 
-pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
+/// Read the repository at `dir` (default `.`) and assess every part; `None`
+/// outside a git work tree. Prints nothing.
+pub fn assess<'a>(cat: &'a Catalog, dir: Option<&Path>) -> Result<Option<Assessment<'a>>, Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
-    let root = git(given, &["rev-parse", "--show-toplevel"])
+    let Some(root) = git(given, &["rev-parse", "--show-toplevel"])
         .filter(|_| git(given, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true"))
         .map(PathBuf::from)
-        .ok_or_else(|| Exit::Usage(format!("{} is not a git work tree", given.display())))?;
+    else {
+        return Ok(None);
+    };
 
     // Languages: tracked and untracked-but-not-ignored files.
     let listing = git(
@@ -382,76 +405,105 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         })
         .collect();
     let is_experiment = |name: &str| cat.part(name).is_some_and(|p| p.is_experimental());
-    let recommended: Vec<&str> = rows
+    let install: Vec<&str> = rows
         .iter()
         .filter(|r| r.verdict == Verdict::Recommend && !is_experiment(r.part))
         .map(|r| r.part)
         .collect();
-    let experiments = cat.experimental_names();
-    let recommended_experiments: Vec<&str> = rows
+
+    // Repository facts only: the per-part signals (machine_present,
+    // repo_present, repo_file_here) hold for one part and are read in
+    // that part's row, so a single flag here would mean "some part".
+    let mut signals: BTreeMap<String, bool> = BTreeMap::new();
+    let no_part = PartFacts {
+        machine_present: false,
+        repo_present: false,
+        repo_file_here: false,
+        unknown: Vec::new(),
+    };
+    for (name, signal) in Signal::PLAIN {
+        let repository_level = match signal {
+            Signal::MachinePresent | Signal::RepoPresent | Signal::RepoFileHere => false,
+            Signal::AdrFolder
+            | Signal::ClaudeSetUp
+            | Signal::CiPresent
+            | Signal::LanguageSupported
+            | Signal::Dep(_) => true,
+        };
+        if repository_level {
+            signals.insert(name.to_string(), signal_holds(&signal, &facts, &no_part));
+        }
+    }
+    let prefixes = cat
+        .parts
         .iter()
-        .filter(|r| r.verdict == Verdict::Recommend && is_experiment(r.part))
-        .map(|r| r.part)
-        .collect();
-    let install =
-        (!recommended.is_empty()).then(|| format!("grh install {}", recommended.join(" ")));
+        .flat_map(|p| &p.recommend)
+        .flat_map(|r| &r.when)
+        .filter_map(|c| match &c.signal {
+            Signal::Dep(prefix) => Some(prefix),
+            Signal::MachinePresent
+            | Signal::RepoPresent
+            | Signal::AdrFolder
+            | Signal::ClaudeSetUp
+            | Signal::CiPresent
+            | Signal::LanguageSupported
+            | Signal::RepoFileHere => None,
+        });
+    for prefix in prefixes {
+        let holds = facts.dependencies.iter().any(|d| d.starts_with(prefix));
+        signals.insert(format!("dep:{prefix}"), holds);
+    }
+
+    Ok(Some(Assessment {
+        root,
+        languages,
+        rows,
+        hooks,
+        warnings,
+        adr_folder: facts.adr_folder,
+        ci: facts.ci,
+        signals,
+        install,
+        experimental: cat.experimental_names(),
+    }))
+}
+
+pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
+    let Some(assessment) = assess(cat, dir)? else {
+        let given = dir.unwrap_or_else(|| Path::new("."));
+        return Err(Exit::Usage(format!(
+            "{} is not a git work tree",
+            given.display()
+        )));
+    };
+    let Assessment {
+        root,
+        languages,
+        rows,
+        hooks,
+        warnings,
+        adr_folder,
+        ci,
+        signals,
+        install,
+        experimental,
+    } = assessment;
+    let install = (!install.is_empty()).then(|| format!("grh install {}", install.join(" ")));
 
     if format == crate::status::Format::Json {
-        // Repository facts only: the per-part signals (machine_present,
-        // repo_present, repo_file_here) hold for one part and are read in
-        // that part's row, so a single flag here would mean "some part".
-        let mut signals: BTreeMap<String, bool> = BTreeMap::new();
-        let no_part = PartFacts {
-            machine_present: false,
-            repo_present: false,
-            repo_file_here: false,
-            unknown: Vec::new(),
-        };
-        for (name, signal) in Signal::PLAIN {
-            let repository_level = match signal {
-                Signal::MachinePresent | Signal::RepoPresent | Signal::RepoFileHere => false,
-                Signal::AdrFolder
-                | Signal::ClaudeSetUp
-                | Signal::CiPresent
-                | Signal::LanguageSupported
-                | Signal::Dep(_) => true,
-            };
-            if repository_level {
-                signals.insert(name.to_string(), signal_holds(&signal, &facts, &no_part));
-            }
-        }
-        let prefixes = cat
-            .parts
-            .iter()
-            .flat_map(|p| &p.recommend)
-            .flat_map(|r| &r.when)
-            .filter_map(|c| match &c.signal {
-                Signal::Dep(prefix) => Some(prefix),
-                Signal::MachinePresent
-                | Signal::RepoPresent
-                | Signal::AdrFolder
-                | Signal::ClaudeSetUp
-                | Signal::CiPresent
-                | Signal::LanguageSupported
-                | Signal::RepoFileHere => None,
-            });
-        for prefix in prefixes {
-            let holds = facts.dependencies.iter().any(|d| d.starts_with(prefix));
-            signals.insert(format!("dep:{prefix}"), holds);
-        }
         let doc = json!({
             "schema": 2,
             "dir": root.to_string_lossy(),
             "languages": languages,
             "hooks": hooks,
-            "adr_folder": facts.adr_folder,
-            "ci": facts.ci,
+            "adr_folder": adr_folder,
+            "ci": ci,
             "signals": signals,
             "parts": rows.iter().map(|r| json!({
                 "part": r.part, "verdict": r.verdict.as_str(), "reason": r.reason
             })).collect::<Vec<_>>(),
             "install": install,
-            "experimental": experiments,
+            "experimental": experimental,
             "warnings": warnings,
         });
         let text = serde_json::to_string_pretty(&doc)
@@ -459,6 +511,9 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         return print_lines(&[text]);
     }
 
+    let recommended_experiments = rows.iter().filter(|r| {
+        r.verdict == Verdict::Recommend && cat.part(r.part).is_some_and(|p| p.is_experimental())
+    });
     let width = rows.iter().map(|r| r.part.len()).max().unwrap_or(0);
     let mut lines: Vec<String> = rows
         .iter()
@@ -469,7 +524,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         })
         .collect();
     lines.push(install.unwrap_or_else(|| "nothing to install".to_string()));
-    for name in recommended_experiments {
+    for Row { part: name, .. } in recommended_experiments {
         lines.push(format!(
             "{name} is an experiment: grh install {name} to try it"
         ));
@@ -484,4 +539,56 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         }
     }
     printed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog() -> Catalog {
+        Catalog::load().expect("the embedded catalog loads")
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn assess_reads_a_git_repository_without_printing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        git_ok(dir.path(), &["init", "-q"]);
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").expect("write");
+        let cat = catalog();
+        let assessment = assess(&cat, Some(dir.path()))
+            .expect("no failure")
+            .expect("inside a work tree");
+        assert_eq!(assessment.rows.len(), cat.parts.len());
+        assert_eq!(assessment.languages.get("rust"), Some(&1));
+        let recommended: Vec<&str> = assessment
+            .rows
+            .iter()
+            .filter(|r| {
+                r.verdict == Verdict::Recommend
+                    && !cat.part(r.part).is_some_and(|p| p.is_experimental())
+            })
+            .map(|r| r.part)
+            .collect();
+        assert_eq!(assessment.install, recommended);
+    }
+
+    #[test]
+    fn assess_outside_a_work_tree_is_none() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cat = catalog();
+        assert!(assess(&cat, Some(dir.path()))
+            .expect("no failure")
+            .is_none());
+    }
 }
