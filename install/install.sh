@@ -134,9 +134,9 @@ main() {
         *) warn "$BIN_DIR is not on your PATH: add it to run grh by name" ;;
     esac
     printf '  Nothing else is installed yet. Next:\n\n'
-    printf '    grh audit                  # what fits this repository\n'
-    printf '    grh install solo           # gate and guardrails\n'
-    printf '    grh install team           # + decisions and conform\n\n'
+    printf '    grh audit                          # what fits this repository\n'
+    printf '    grh install greengate greenpiste   # name the parts you want\n'
+    printf '    grh install --all --repo           # or every part, and this repository\n\n'
 }
 
 main "$@"
