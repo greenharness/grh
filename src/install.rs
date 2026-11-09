@@ -162,7 +162,7 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
         }
         if !part.bundle_skills().is_empty() || !part.bundle_agents().is_empty() {
             ui.say(&format!(
-                "      {} skills and {} agents into the Claude config directory",
+                "      {} skills and {} agents into the host config directory",
                 part.bundle_skills().len(),
                 part.bundle_agents().len()
             ));

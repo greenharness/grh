@@ -294,9 +294,9 @@ pub fn run(catalog: &crate::catalog::Catalog, opts: &Opts) -> Result<(), Exit> {
         );
     }
     if let Some(line) = m.conform.as_ref().and_then(|c| c.eslint.as_ref()) {
-        ui.say(&format!("conform eslint: {line}"));
+        ui.say(&format!("lint line: {line}"));
         sum.gap(
-            &format!("{name}: the conform eslint line was not added"),
+            &format!("{name}: the lint line was not added"),
             &format!("add to your eslint config: {line}"),
         );
     }
