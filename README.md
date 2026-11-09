@@ -5,8 +5,8 @@ One command to install, audit and remove the Green Harness parts.
 ```sh
 curl -fsSL https://raw.githubusercontent.com/greenharness/grh/main/install/install.sh | sh
 grh audit                # what fits this repository
-grh install solo         # greengate + greenpiste
-grh install team --repo  # + decisions and conform, and arm this repository
+grh install greengate greenpiste   # name the parts you want
+grh install --all --repo           # or every part, and arm this repository
 grh uninstall            # take every part back out
 ```
 
@@ -28,8 +28,8 @@ when stdin is not a terminal).
 | workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs greenpiste and greengate) |
 | design | Duro | the Duro design system, themed by your tokens (extension, not published yet) |
 
-Profiles: **solo** (greengate, greenpiste), **team** (solo + decisions,
-conform), **full** (team + router). workflow and design are opt-in. The old
+There are no profiles (removed in 0.3.0): name the parts, or pass `--all`.
+`grh audit` prints the `grh install` line that fits this repository. The old
 names `gate` and `guardrails` still work, with a warning.
 
 Every part is described by a manifest, `greenharness.toml` v2
