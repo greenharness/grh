@@ -1,0 +1,69 @@
+{
+  "adr_folder": null,
+  "ci": [],
+  "claude": {
+    "amont_agent": "absent",
+    "aval_mcp": false,
+    "files": [],
+    "relais": "absent"
+  },
+  "dir": "<dir>",
+  "duro": true,
+  "extras": [
+    "design"
+  ],
+  "hooks": [],
+  "install": "grh install solo design",
+  "languages": {
+    "other": 1,
+    "typescript/javascript": 1
+  },
+  "parts": [
+    {
+      "part": "gate",
+      "reason": "a git repository: gate its commits and pushes",
+      "verdict": "recommend"
+    },
+    {
+      "part": "guardrails",
+      "reason": "a git repository: keep agents inside the rules",
+      "verdict": "recommend"
+    },
+    {
+      "part": "decisions",
+      "reason": "no ADR folder",
+      "verdict": "not useful"
+    },
+    {
+      "part": "conform",
+      "reason": "no ADR folder to conform to",
+      "verdict": "not useful"
+    },
+    {
+      "part": "router",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "attest",
+      "reason": "no CI workflows",
+      "verdict": "not useful"
+    },
+    {
+      "part": "workflow",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "design",
+      "reason": "package.json depends on @duro-app/",
+      "verdict": "recommend"
+    }
+  ],
+  "profile": "solo",
+  "profile_parts": [
+    "gate",
+    "guardrails"
+  ],
+  "warnings": []
+}

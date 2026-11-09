@@ -17,53 +17,27 @@
 skills_repo = "greenharness/skills"
 skills_version = "0.5.0"
 skills_sha256 = "9bb0f7796a8f462bc5b20cb716791a7c0f4b1f972747885224c7e24d48e6384d"
+foreign_markers = ["relais:begin"]
 order = ["decisions", "greengate", "greenpiste", "router", "conform", "attest", "workflow", "design"]
 
-[profiles]
+# Names that installed several parts before 0.3.0, with their former members.
+# grh refuses them with a hint (Catalog::checked: no part name or alias, and
+# every member a published part).
+[retired_names]
 solo = ["greengate", "greenpiste"]
 team = ["greengate", "greenpiste", "decisions", "conform"]
 full = ["greengate", "greenpiste", "decisions", "conform", "router"]
 
-[[part]]
-[part.extension]
-name = "decisions"
-version = "1.12.0"
-harness = ">=0.2"
-summary = "what is decided: architecture decision records, resolved"
-needs = []
-
-[part.tool]
-bin = "aval"
-[part.tool.release]
-repo = "fredericrous/aval"
-version = "1.12.0"
-[part.tool.release.sha256]
-aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
-x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
-aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
-x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
-[part.tool.machine]
-install = ["{bin}", "mcp", "install", "--write"]
-uninstall = ["{bin}", "mcp", "uninstall", "--write"]
-requires = ["claude"]
-[part.tool.machine.status]
-args = ["mcp", "install", "--check"]
-exit = { present = 0, absent = 1 }
-[part.tool.repo_level]
-install = ["{bin}", "hook", "install"]
-uninstall = ["{bin}", "hook", "uninstall", "--write"]
-[part.tool.repo_level.status]
-args = ["hook", "uninstall", "--check"]
-exit = { present = 1, absent = 0 }
-
-[part.bundle]
-skills = ["relais-architecture-conflict"]
+[audit]
+adr_folder = [".adr.yaml", "docs/adr", "docs/decisions", "doc/adr"]
+claude_set_up = [".claude", "CLAUDE.md", "AGENTS.md"]
+ci_present = [".github/workflows", ".forgejo/workflows"]
 
 [[part]]
 [part.extension]
 name = "greengate"
 version = "2.3.1"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "what a commit or a push may carry: git hooks"
 needs = []
 aliases = ["gate"]
@@ -98,11 +72,44 @@ warning = "repositories armed by hand with it fail their next commit until `amon
 [part.bundle]
 skills = ["relais-verified-push", "merge-when-green", "tag-release"]
 
+[[part.conflict]]
+git_config = "core.hooksPath"
+label = "core.hooksPath={hooks_path}"
+warning = "core.hooksPath redirects git hooks to {hooks_path}; amont refuses a redirected hooks path: unset it before grh install {part}"
+
+[[part.conflict]]
+paths = [".husky"]
+label = "husky (.husky/)"
+warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
+
+[[part.conflict]]
+paths = ["lefthook.yml", ".lefthook.yml"]
+label = "lefthook"
+warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
+
+[[part.conflict]]
+paths = [".pre-commit-config.yaml"]
+label = "pre-commit (.pre-commit-config.yaml)"
+warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
+
+[[part.conflict]]
+foreign_hooks = true
+
+[[part.recommend]]
+when = ["repo_present"]
+verdict = "already here"
+reason = "amont's git hooks are installed here"
+
+[[part.recommend]]
+when = []
+verdict = "recommend"
+reason = "a git repository: gate its commits and pushes"
+
 [[part]]
 [part.extension]
 name = "greenpiste"
 version = "3.23.1"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 aliases = ["guardrails"]
@@ -125,11 +132,108 @@ requires = ["claude"]
 args = ["doctor", "--json"]
 json = ["integration", "state"]
 
+[[part.recommend]]
+when = ["machine_present"]
+verdict = "already here"
+reason = "amont-agent's integration is installed"
+
+[[part.recommend]]
+when = []
+verdict = "recommend"
+reason = "a git repository: keep agents inside the rules"
+
+[[part]]
+[part.extension]
+name = "decisions"
+version = "1.12.0"
+harness = ">=0.3"
+summary = "what is decided: architecture decision records, resolved"
+needs = []
+
+[part.tool]
+bin = "aval"
+[part.tool.release]
+repo = "fredericrous/aval"
+version = "1.12.0"
+[part.tool.release.sha256]
+aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
+x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
+aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
+x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
+[part.tool.machine]
+install = ["{bin}", "mcp", "install", "--write"]
+uninstall = ["{bin}", "mcp", "uninstall", "--write"]
+requires = ["claude"]
+[part.tool.machine.status]
+args = ["mcp", "install", "--check"]
+exit = { present = 0, absent = 1 }
+[part.tool.repo_level]
+install = ["{bin}", "hook", "install"]
+uninstall = ["{bin}", "hook", "uninstall", "--write"]
+[part.tool.repo_level.status]
+args = ["hook", "uninstall", "--check"]
+exit = { present = 1, absent = 0 }
+
+[part.bundle]
+skills = ["relais-architecture-conflict"]
+
+[[part.recommend]]
+when = ["adr_folder", "machine_present"]
+verdict = "already here"
+reason = "aval is registered with Claude Code"
+
+[[part.recommend]]
+when = ["adr_folder"]
+verdict = "recommend"
+reason = "decisions live in {adr_folder}"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "no ADR folder"
+
+[[part]]
+[part.extension]
+name = "conform"
+version = "0.17.0"
+harness = ">=0.3"
+summary = "which decided code rules a tree breaks, by lint"
+needs = ["decisions"]
+hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
+# Repo level writes nothing: `adr-lint sync` rewrites lint configs the
+# repository owns, so grh prints the commands instead.
+
+[part.tool]
+bin = "adr-lint"
+[part.tool.release]
+repo = "fredericrous/adr-lint"
+version = "0.17.0"
+[part.tool.release.sha256]
+aarch64-apple-darwin = "5e8caa567fcb110d242eaad5b908f9863bad3af772dbb3e2cb017274bbc233d3"
+x86_64-apple-darwin = "e6d495d97c3f12d314b27aea57f1164d16701851ee56428369aaf2c29c786b14"
+aarch64-unknown-linux-gnu = "17282fe138c814a01b89865653ef1c309983823d220003efcf35799bff685b79"
+x86_64-unknown-linux-gnu = "3cd150e8539c733c84bb6c21092beb35700f54b5ddbc7ea1ee5b6b588b921b46"
+
+[[part.recommend]]
+when = ["adr_folder", "language_supported"]
+verdict = "recommend"
+reason = "{adr_folder} plus a supported language"
+
+[[part.recommend]]
+when = ["adr_folder"]
+verdict = "not useful"
+reason = "no supported language (rust, typescript/javascript, python, go)"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "no ADR folder to conform to"
+
 [[part]]
 [part.extension]
 name = "router"
 version = "0.39.0"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "which model runs a bounded task, verified and accounted"
 needs = []
 
@@ -151,33 +255,26 @@ requires = ["claude"]
 args = ["doctor", "--json"]
 json = ["integration", "state"]
 
-[[part]]
-[part.extension]
-name = "conform"
-version = "0.17.0"
-harness = ">=0.2"
-summary = "which decided code rules a tree breaks, by lint"
-needs = ["decisions"]
-hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
-# Repo level writes nothing: `adr-lint sync` rewrites lint configs the
-# repository owns, so grh prints the commands instead.
+[[part.recommend]]
+when = ["claude_set_up", "machine_present"]
+verdict = "already here"
+reason = "relais's integration is installed"
 
-[part.tool]
-bin = "adr-lint"
-[part.tool.release]
-repo = "fredericrous/adr-lint"
-version = "0.17.0"
-[part.tool.release.sha256]
-aarch64-apple-darwin = "5e8caa567fcb110d242eaad5b908f9863bad3af772dbb3e2cb017274bbc233d3"
-x86_64-apple-darwin = "e6d495d97c3f12d314b27aea57f1164d16701851ee56428369aaf2c29c786b14"
-aarch64-unknown-linux-gnu = "17282fe138c814a01b89865653ef1c309983823d220003efcf35799bff685b79"
-x86_64-unknown-linux-gnu = "3cd150e8539c733c84bb6c21092beb35700f54b5ddbc7ea1ee5b6b588b921b46"
+[[part.recommend]]
+when = ["claude_set_up"]
+verdict = "recommend"
+reason = "Claude Code is set up ({claude_files})"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "Claude Code is not set up here"
 
 [[part]]
 [part.extension]
 name = "attest"
 version = "0.1.0"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "CI skips what your laptop already checked, on a signed tree"
 needs = ["greengate"]
 # No binary on the machine: CI verifies, greengate signs at pre-push.
@@ -197,11 +294,26 @@ jobs:
       - uses: fredericrous/attest@v1
 '''
 
+[[part.recommend]]
+when = ["repo_file_here"]
+verdict = "already here"
+reason = "an attest workflow exists"
+
+[[part.recommend]]
+when = ["ci_present"]
+verdict = "recommend"
+reason = "CI in {ci}"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "no CI workflows"
+
 [[part]]
 [part.extension]
 name = "workflow"
 version = "0.1.0"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "plans reviewed by a panel, one worktree per task, merge on green"
 needs = ["greengate", "greenpiste"]
 
@@ -244,12 +356,33 @@ agents = [
   "plan-review-ux-research",
 ]
 
+[[part.recommend]]
+when = ["claude_set_up"]
+verdict = "recommend"
+reason = "Claude Code is set up: release and merge skills"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "Claude Code is not set up here"
+
 [[part]]
 [part.extension]
 name = "design"
 version = "0.1.0"
-harness = ">=0.2"
+harness = ">=0.3"
 summary = "the Duro design system, themed by your tokens (extension)"
 needs = []
 published = false
 # Installed from its published extension manifest; not published yet.
+# Its audit rule lives here until that manifest carries its own.
+
+[[part.recommend]]
+when = ["dep:@duro-app/"]
+verdict = "recommend"
+reason = "package.json depends on @duro-app/"
+
+[[part.recommend]]
+when = []
+verdict = "not useful"
+reason = "no @duro-app/ dependency"

@@ -1,28 +1,54 @@
-//! grh's install path names no part: what a tool does lives in its manifest.
-//! Reads the sources of the generic modules, drops their `#[cfg(test)]`
-//! modules and comments, and fails on a string literal that names a part.
-//! `claude` may appear only in extension.rs, for an MCP registration.
+//! grh names no part or tool: what a tool does lives in its manifest. Reads
+//! every `.rs` file under `src/`, drops its `#[cfg(test)]` modules and
+//! comments, and fails on a string literal that names a part or a tool.
+//! `claude` may appear only in the files that talk to the host
+//! (`HOST_FILES`).
 
 use std::path::Path;
 
+/// Every part and tool name, in the catalog's names and the old ones, and the
+/// things a part's manifest knows about (`husky` and `lefthook` are hook
+/// managers a manifest's conflicts name). Compared lowercased.
 const PARTS: &[&str] = &[
+    "greengate",
+    "greenpiste",
+    "gate",
+    "guardrails",
+    "decisions",
+    "conform",
+    "router",
+    "attest",
+    "workflow",
+    "design",
     "amont",
     "aval",
     "relais",
-    "gate",
-    "greengate",
-    "greenpiste",
-    "attest",
+    "duro",
+    "husky",
+    "lefthook",
 ];
 const HOST: &str = "claude";
-const FILES: &[&str] = &[
-    "owner.rs",
-    "uninstall.rs",
-    "install.rs",
-    "extension.rs",
-    "status.rs",
-    "ops.rs",
-];
+/// The files that talk to the host (Claude Code) and may name it.
+const HOST_FILES: &[&str] = &["extension.rs", "skills.rs", "audit.rs"];
+
+/// Every `.rs` file under `dir`, relative to `dir`.
+fn sources(dir: &Path) -> Vec<String> {
+    fn walk(root: &Path, dir: &Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk(root, &path, out);
+            } else if path.extension().is_some_and(|e| e == "rs") {
+                let rel = path.strip_prefix(root).unwrap();
+                out.push(rel.to_string_lossy().into_owned());
+            }
+        }
+    }
+    let mut out = Vec::new();
+    walk(dir, dir, &mut out);
+    out.sort();
+    out
+}
 
 /// `source` without its `#[cfg(test)]` modules.
 fn without_test_modules(source: &str) -> String {
@@ -129,22 +155,77 @@ fn words(text: &str) -> Vec<&str> {
         .collect()
 }
 
-#[test]
-fn the_generic_modules_name_no_part() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+/// What a file names: each literal word that is a part or tool name, or the
+/// host outside the files allowed to name it.
+fn names_in(file: &str, source: &str) -> Vec<String> {
     let mut named = Vec::new();
-    for file in FILES {
-        let source = std::fs::read_to_string(src.join(file)).unwrap();
-        for literal in literals(&without_test_modules(&source)) {
-            for word in words(&literal) {
-                let banned = PARTS.contains(&word) || (word == HOST && *file != "extension.rs");
-                if banned {
-                    named.push(format!("{file}: {literal:?} names {word}"));
-                }
+    for literal in literals(&without_test_modules(source)) {
+        for word in words(&literal) {
+            let word = word.to_ascii_lowercase();
+            let banned =
+                PARTS.contains(&word.as_str()) || (word == HOST && !HOST_FILES.contains(&file));
+            if banned {
+                named.push(format!("{file}: {literal:?} names {word}"));
             }
         }
     }
+    named
+}
+
+#[test]
+fn grh_names_no_part_or_tool() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let files = sources(&src);
+    assert!(
+        files.len() >= 15,
+        "the scan found only {} sources: {files:?}",
+        files.len()
+    );
+    // The walk must reach the modules that hold the messages, wherever they
+    // move to.
+    for module in [
+        "main.rs",
+        "audit.rs",
+        "install.rs",
+        "catalog.rs",
+        "manifest.rs",
+    ] {
+        assert!(
+            files.iter().any(|f| f.ends_with(module)),
+            "the scan missed {module}: {files:?}"
+        );
+    }
+    let mut named = Vec::new();
+    let mut silent = Vec::new();
+    for file in &files {
+        let source = std::fs::read_to_string(src.join(file)).unwrap();
+        // A source with code but no literal at all means the scanner lost
+        // its place in it (an unclosed raw string, say), not a clean file.
+        if literals(&without_test_modules(&source)).is_empty() && source.contains("fn ") {
+            silent.push(file.clone());
+        }
+        named.extend(names_in(file, &source));
+    }
+    assert!(silent.is_empty(), "no literal read from {silent:?}");
     assert!(named.is_empty(), "{}", named.join("\n"));
+}
+
+#[test]
+fn every_host_file_exists() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    for file in HOST_FILES {
+        assert!(
+            src.join(file).is_file(),
+            "{file} is allowed to name the host but does not exist"
+        );
+    }
+}
+
+#[test]
+fn a_part_name_in_any_scanned_file_is_caught() {
+    let found = names_in("probe.rs", "fn f() { run(\"Aval\"); run(\"claude\"); }");
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(names_in("extension.rs", "fn f() { run(\"claude\"); }").is_empty());
 }
 
 #[test]

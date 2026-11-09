@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub gate tool: answers `list --json` from STUB_AMONT (default absent).
+case "$*" in
+  "list --json") printf '{"installed":{"state":"%s"}}\n' "${STUB_AMONT:-absent}" ;;
+  *) exit 0 ;;
+esac

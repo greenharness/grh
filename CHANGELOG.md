@@ -5,6 +5,29 @@ section is missing here.
 
 ## Unreleased
 
+## v0.3.0
+
+### Changed
+
+- **Breaking: `grh audit --json` has a new shape.** It carries `"schema": 2`,
+  `signals` and `install` (a command string, or `null` when nothing is
+  recommended). `profile`, `profile_parts`, `extras`, `claude` and `duro` are
+  gone. Rows use the catalog's part names (`greengate`, `greenpiste`).
+- **Audit is data.** Each part's manifest carries `[[recommend]]` and
+  `[[conflict]]` rules and `catalog.toml` carries the path lists, so audit
+  names no tool. These keys need `harness = ">=0.3"`; grh's harness is 0.3.
+- **Profiles are removed.** `grh install solo` (or `team`, `full`) exits 2
+  with a hint naming the parts it used to install. `grh install --all`
+  installs every published part (off a terminal it needs `--yes`); a part
+  whose `needs` failed is skipped and named, and the run exits 1.
+- **Skills are placed only when the part's binary is present.**
+- `grh audit | head -1` ends quietly with exit 0.
+- The test that grh names no tool now scans every source file, and CI runs it
+  as its own step.
+
+Receipts are unchanged, so 0.2.0 reads what 0.3.0 wrote. To go back:
+`GRH_VERSION=v0.2.0 sh install.sh`.
+
 ## v0.2.0
 
 ### Changed

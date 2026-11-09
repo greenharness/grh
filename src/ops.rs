@@ -172,12 +172,17 @@ impl Consent {
 
 /// Ask y/N on a terminal; off a terminal, `--yes` is required.
 pub fn confirm(consent: Consent, what: &str) -> Result<bool, Exit> {
+    confirm_rerun(consent, what, "--yes")
+}
+
+/// `confirm`, with `rerun` naming what to type again when stdin is not a terminal.
+pub fn confirm_rerun(consent: Consent, what: &str, rerun: &str) -> Result<bool, Exit> {
     if consent == Consent::Given {
         return Ok(true);
     }
     if !std::io::stdin().is_terminal() {
         return Err(Exit::Usage(format!(
-            "{what} needs confirmation and stdin is not a terminal: rerun with --yes (nothing changed)"
+            "{what} needs confirmation and stdin is not a terminal: rerun with {rerun} (nothing changed)"
         )));
     }
     eprint!("Proceed? [y/N] ");
@@ -322,13 +327,9 @@ pub fn same_scope(e: &Entry, part: &Part, level: Level, repo: Option<&Path>) -> 
 }
 
 pub fn listing(cat: &Catalog) -> String {
-    let mut out = String::from("name parts or profiles to install.\nparts:\n");
+    let mut out = String::from("name the parts to install (grh install <part>...), or install them all: grh install --all\nparts:\n");
     for part in &cat.parts {
         out.push_str(&format!("  {:<11} {}\n", part.name(), part.summary()));
-    }
-    out.push_str("profiles:\n");
-    for (name, members) in &cat.profiles {
-        out.push_str(&format!("  {:<11} {}\n", name, members.join(" ")));
     }
     out
 }

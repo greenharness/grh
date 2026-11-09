@@ -1,0 +1,69 @@
+{
+  "adr_folder": null,
+  "ci": [
+    ".github/workflows",
+    ".forgejo/workflows"
+  ],
+  "claude": {
+    "amont_agent": "absent",
+    "aval_mcp": false,
+    "files": [],
+    "relais": "absent"
+  },
+  "dir": "<dir>",
+  "duro": false,
+  "extras": [],
+  "hooks": [],
+  "install": "grh install solo",
+  "languages": {
+    "other": 2
+  },
+  "parts": [
+    {
+      "part": "gate",
+      "reason": "a git repository: gate its commits and pushes",
+      "verdict": "recommend"
+    },
+    {
+      "part": "guardrails",
+      "reason": "a git repository: keep agents inside the rules",
+      "verdict": "recommend"
+    },
+    {
+      "part": "decisions",
+      "reason": "no ADR folder",
+      "verdict": "not useful"
+    },
+    {
+      "part": "conform",
+      "reason": "no ADR folder to conform to",
+      "verdict": "not useful"
+    },
+    {
+      "part": "router",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "attest",
+      "reason": "an attest workflow exists",
+      "verdict": "already here"
+    },
+    {
+      "part": "workflow",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "design",
+      "reason": "no @duro-app/ dependency",
+      "verdict": "not useful"
+    }
+  ],
+  "profile": "solo",
+  "profile_parts": [
+    "gate",
+    "guardrails"
+  ],
+  "warnings": []
+}

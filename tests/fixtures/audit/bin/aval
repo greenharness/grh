@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub decisions tool: `mcp install --check` exits 0 when STUB_AVAL_MCP=1, else 1.
+case "$*" in
+  "mcp install --check") [ "${STUB_AVAL_MCP:-0}" = 1 ] ;;
+  *) exit 0 ;;
+esac

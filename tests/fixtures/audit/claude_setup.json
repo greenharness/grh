@@ -1,0 +1,75 @@
+{
+  "adr_folder": null,
+  "ci": [],
+  "claude": {
+    "amont_agent": "absent",
+    "aval_mcp": false,
+    "files": [
+      ".claude",
+      "CLAUDE.md"
+    ],
+    "relais": "absent"
+  },
+  "dir": "<dir>",
+  "duro": false,
+  "extras": [
+    "workflow"
+  ],
+  "hooks": [],
+  "install": "grh install full workflow",
+  "languages": {
+    "other": 2,
+    "python": 1
+  },
+  "parts": [
+    {
+      "part": "gate",
+      "reason": "a git repository: gate its commits and pushes",
+      "verdict": "recommend"
+    },
+    {
+      "part": "guardrails",
+      "reason": "a git repository: keep agents inside the rules",
+      "verdict": "recommend"
+    },
+    {
+      "part": "decisions",
+      "reason": "no ADR folder",
+      "verdict": "not useful"
+    },
+    {
+      "part": "conform",
+      "reason": "no ADR folder to conform to",
+      "verdict": "not useful"
+    },
+    {
+      "part": "router",
+      "reason": "Claude Code is set up (.claude, CLAUDE.md)",
+      "verdict": "recommend"
+    },
+    {
+      "part": "attest",
+      "reason": "no CI workflows",
+      "verdict": "not useful"
+    },
+    {
+      "part": "workflow",
+      "reason": "Claude Code is set up: release and merge skills",
+      "verdict": "recommend"
+    },
+    {
+      "part": "design",
+      "reason": "no @duro-app/ dependency",
+      "verdict": "not useful"
+    }
+  ],
+  "profile": "full",
+  "profile_parts": [
+    "gate",
+    "guardrails",
+    "decisions",
+    "conform",
+    "router"
+  ],
+  "warnings": []
+}

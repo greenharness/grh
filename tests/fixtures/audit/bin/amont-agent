@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub agent-guard tool: answers `doctor --json` from STUB_AGENT (default absent).
+case "$*" in
+  "doctor --json") printf '{"integration":{"state":"%s"}}\n' "${STUB_AGENT:-absent}" ;;
+  *) exit 0 ;;
+esac

@@ -43,6 +43,9 @@ fn canonical(cat: &Catalog, name: &str) -> String {
 }
 
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
+    if let Some(notice) = cat.retired_notice(&opts.names, crate::catalog::Verb::Uninstall) {
+        return Err(Exit::Usage(notice));
+    }
     let ui = Ui::new(opts.quiet);
     cat.warn_aliases(&ui, &opts.names, crate::catalog::Verb::Uninstall);
     let only_repo = if opts.repo { Some(git_root()?) } else { None };
@@ -57,12 +60,10 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         targets.extend(held.iter().cloned());
     } else {
         for n in &opts.names {
-            if let Some(members) = cat.profiles.get(n) {
-                targets.extend(members.iter().map(|m| canonical(cat, m)));
-            } else if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
+            if cat.part(n).is_some() || n.starts_with(extension::PREFIX) {
                 targets.insert(canonical(cat, n));
             } else {
-                return Err(Exit::Usage(format!("unknown part or profile: {n}")));
+                return Err(Exit::Usage(format!("unknown part: {n}")));
             }
         }
     }
@@ -161,12 +162,15 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
             &mut sum,
             part,
             only_repo.as_deref(),
+            &cat.foreign_markers,
         ));
     }
     if only_repo.is_none() {
         for x in &ext_todo {
             ui.say(x);
-            failures.extend(remove_extension(&ui, &mut store, x).settle(&mut sum));
+            failures.extend(
+                remove_extension(&ui, &mut store, x, &cat.foreign_markers).settle(&mut sum),
+            );
         }
     }
     sum.print(&ui);
@@ -188,6 +192,7 @@ fn remove_part(
     sum: &mut Summary,
     part: &Part,
     only_repo: Option<&Path>,
+    foreign_markers: &[String],
 ) -> Vec<Exit> {
     let name = part.name();
     let mut failures: Vec<Exit> = Vec::new();
@@ -209,7 +214,7 @@ fn remove_part(
     for level in [Level::Repo, Level::Machine] {
         failures.extend(undo_entries(&undo, store, &entries, level).settle(sum));
         if level == Level::Machine && only_repo.is_none() {
-            match skills::remove(|recorded| part.answers_to(recorded), store) {
+            match skills::remove(|recorded| part.answers_to(recorded), foreign_markers, store) {
                 Ok(r) => {
                     if !r.removed.is_empty() {
                         ui.ok(&format!(
@@ -306,7 +311,7 @@ fn undo_entries(undo: &Undo, store: &mut Store, entries: &[Entry], level: Level)
 
 /// Take out an extension: its tool, files, servers and binary, each only as
 /// far as the receipt recorded it, with no manifest to read.
-fn remove_extension(ui: &Ui, store: &mut Store, name: &str) -> Undone {
+fn remove_extension(ui: &Ui, store: &mut Store, name: &str, foreign_markers: &[String]) -> Undone {
     let mut failures: Vec<Exit> = Vec::new();
     let mut sum = Summary::default();
     let entries: Vec<Entry> = store
@@ -356,7 +361,7 @@ fn remove_extension(ui: &Ui, store: &mut Store, name: &str) -> Undone {
         .cloned()
         .collect();
     failures.extend(undo_entries(&undo, store, &repo_files, Level::Repo).settle(&mut sum));
-    failures.extend(extension::remove(ui, store, name));
+    failures.extend(extension::remove(ui, store, name, foreign_markers));
     failures.extend(restore_backups(ui, store, name, &entries).settle(&mut sum));
     failures.extend(remove_binary(
         ui,

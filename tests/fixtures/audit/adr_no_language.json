@@ -1,0 +1,68 @@
+{
+  "adr_folder": ".adr.yaml",
+  "ci": [],
+  "claude": {
+    "amont_agent": "absent",
+    "aval_mcp": false,
+    "files": [],
+    "relais": "absent"
+  },
+  "dir": "<dir>",
+  "duro": false,
+  "extras": [],
+  "hooks": [],
+  "install": "grh install team",
+  "languages": {
+    "other": 1
+  },
+  "parts": [
+    {
+      "part": "gate",
+      "reason": "a git repository: gate its commits and pushes",
+      "verdict": "recommend"
+    },
+    {
+      "part": "guardrails",
+      "reason": "a git repository: keep agents inside the rules",
+      "verdict": "recommend"
+    },
+    {
+      "part": "decisions",
+      "reason": "decisions live in .adr.yaml",
+      "verdict": "recommend"
+    },
+    {
+      "part": "conform",
+      "reason": "no supported language (rust, typescript/javascript, python, go)",
+      "verdict": "not useful"
+    },
+    {
+      "part": "router",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "attest",
+      "reason": "no CI workflows",
+      "verdict": "not useful"
+    },
+    {
+      "part": "workflow",
+      "reason": "Claude Code is not set up here",
+      "verdict": "not useful"
+    },
+    {
+      "part": "design",
+      "reason": "no @duro-app/ dependency",
+      "verdict": "not useful"
+    }
+  ],
+  "profile": "team",
+  "profile_parts": [
+    "gate",
+    "guardrails",
+    "decisions",
+    "conform"
+  ],
+  "warnings": []
+}

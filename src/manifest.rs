@@ -11,10 +11,13 @@ use serde::{Deserialize, Serialize};
 use crate::exit::Exit;
 
 /// The harness version this grh answers to in `[extension] harness`.
-pub const HARNESS_VERSION: (u64, u64, u64) = (0, 2, 0);
+pub const HARNESS_VERSION: (u64, u64, u64) = (0, 3, 0);
 
 /// The last harness version that knew only the v1 sections and keys.
 const V1_HARNESS_VERSION: (u64, u64, u64) = (0, 1, 0);
+
+/// The last harness version that knew only the v2 sections and keys.
+const V2_HARNESS_VERSION: (u64, u64, u64) = (0, 2, 0);
 
 pub const FILE_NAME: &str = "greenharness.toml";
 
@@ -37,6 +40,10 @@ pub struct Manifest {
     #[serde(default)]
     pub doctor: Vec<Command>,
     pub conform: Option<Conform>,
+    #[serde(default)]
+    pub recommend: Vec<Recommend>,
+    #[serde(default)]
+    pub conflict: Vec<Conflict>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -225,6 +232,228 @@ pub struct Conform {
     pub eslint: Option<String>,
 }
 
+/// The placeholders every template may use: a `reason`, a `warning` or a
+/// `label`.
+pub const PLACEHOLDERS: [&str; 4] = ["adr_folder", "ci", "claude_files", "part"];
+/// What a `git_config` conflict's templates may add: the key's value.
+pub const GIT_CONFIG_PLACEHOLDERS: [&str; 1] = ["hooks_path"];
+/// What a `paths` conflict's `warning` may add: its rendered `label`.
+pub const PATHS_WARNING_PLACEHOLDERS: [&str; 1] = ["manager"];
+
+/// A repository fact a `[[recommend]]` rule can test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Signal {
+    MachinePresent,
+    RepoPresent,
+    AdrFolder,
+    ClaudeSetUp,
+    CiPresent,
+    LanguageSupported,
+    RepoFileHere,
+    /// `package.json` declares a dependency starting with this prefix.
+    Dep(String),
+}
+
+impl Signal {
+    /// The names of the signals without a prefix, in vocabulary order.
+    pub const PLAIN: [(&'static str, Signal); 7] = [
+        ("machine_present", Signal::MachinePresent),
+        ("repo_present", Signal::RepoPresent),
+        ("adr_folder", Signal::AdrFolder),
+        ("claude_set_up", Signal::ClaudeSetUp),
+        ("ci_present", Signal::CiPresent),
+        ("language_supported", Signal::LanguageSupported),
+        ("repo_file_here", Signal::RepoFileHere),
+    ];
+
+    fn parse(name: &str) -> Result<Signal, String> {
+        if let Some(prefix) = name.strip_prefix("dep:") {
+            return if prefix.is_empty() {
+                Err("the signal dep: needs a prefix".into())
+            } else {
+                Ok(Signal::Dep(prefix.to_string()))
+            };
+        }
+        Signal::PLAIN
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, s)| s.clone())
+            .ok_or_else(|| format!("{name:?} is not a signal"))
+    }
+}
+
+/// One entry of a rule's `when`: a signal, optionally negated with `!`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(try_from = "String")]
+pub struct Condition {
+    pub negated: bool,
+    pub signal: Signal,
+}
+
+impl TryFrom<String> for Condition {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Condition, String> {
+        let (negated, name) = match text.strip_prefix('!') {
+            Some(rest) => (true, rest),
+            None => (false, text.as_str()),
+        };
+        Ok(Condition {
+            negated,
+            signal: Signal::parse(name)?,
+        })
+    }
+}
+
+/// What an audit row says about a part.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+pub enum Verdict {
+    #[serde(rename = "already here")]
+    AlreadyHere,
+    #[serde(rename = "recommend")]
+    Recommend,
+    #[serde(rename = "not useful")]
+    NotUseful,
+}
+
+impl Verdict {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Verdict::AlreadyHere => "already here",
+            Verdict::Recommend => "recommend",
+            Verdict::NotUseful => "not useful",
+        }
+    }
+}
+
+/// An audit rule: the first whose `when` holds gives the part's row.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Recommend {
+    pub when: Vec<Condition>,
+    pub verdict: Verdict,
+    /// A template over [`PLACEHOLDERS`].
+    pub reason: String,
+}
+
+/// What a conflict tests in the repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictWhen {
+    /// One of these paths exists.
+    Paths(Vec<String>),
+    /// This git config key is set; its value is `{hooks_path}`.
+    GitConfig(String),
+    /// The hooks directory holds hooks the part did not install. grh labels
+    /// each one itself (`hook <name>`), so this kind takes no `warning` or
+    /// `label`.
+    ForeignHooks,
+}
+
+/// Something in a repository that clashes with the part: a list of `paths`,
+/// or a `git_config` key, or `foreign_hooks`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(try_from = "RawConflict")]
+pub struct Conflict {
+    pub when: ConflictWhen,
+    /// A template, given when the conflict holds.
+    pub warning: Option<String>,
+    /// A template, added to the `hooks` of the audit.
+    pub label: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConflict {
+    #[serde(default)]
+    paths: Vec<String>,
+    git_config: Option<String>,
+    #[serde(default)]
+    foreign_hooks: bool,
+    warning: Option<String>,
+    label: Option<String>,
+}
+
+impl TryFrom<RawConflict> for Conflict {
+    type Error = String;
+
+    fn try_from(raw: RawConflict) -> Result<Conflict, String> {
+        let when = match (raw.paths.is_empty(), raw.git_config, raw.foreign_hooks) {
+            (false, None, false) => ConflictWhen::Paths(raw.paths),
+            (true, Some(key), false) => ConflictWhen::GitConfig(key),
+            (true, None, true) => ConflictWhen::ForeignHooks,
+            _ => {
+                return Err(
+                    "a [[conflict]] needs exactly one of paths, git_config and foreign_hooks"
+                        .into(),
+                )
+            }
+        };
+        if when == ConflictWhen::ForeignHooks && (raw.warning.is_some() || raw.label.is_some()) {
+            return Err(
+                "a foreign_hooks [[conflict]] takes no warning or label: grh labels each hook itself"
+                    .into(),
+            );
+        }
+        Ok(Conflict {
+            when,
+            warning: raw.warning,
+            label: raw.label,
+        })
+    }
+}
+
+/// The `{name}` placeholders of a template, or why it is not one.
+/// `extra` names the placeholders this template's context adds to
+/// [`PLACEHOLDERS`].
+pub fn check_template(template: &str, extra: &[&str]) -> Result<(), String> {
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('}') else {
+            return Err(format!("{template:?} has an unclosed {{"));
+        };
+        let name = &after[..close];
+        if !PLACEHOLDERS.contains(&name) && !extra.contains(&name) {
+            let allowed: Vec<&str> = PLACEHOLDERS.iter().chain(extra).copied().collect();
+            return Err(format!(
+                "{template:?} uses the placeholder {{{name}}}; here the placeholders are {}",
+                allowed.join(", ")
+            ));
+        }
+        rest = &after[close + 1..];
+    }
+    Ok(())
+}
+
+/// `template` with each `{name}` replaced by its value in `values`; a name
+/// without a value is left as written.
+pub fn render(template: &str, values: &[(&str, &str)]) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(open) = rest.find('{') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let known = after.find('}').and_then(|close| {
+            values
+                .iter()
+                .find(|(name, _)| *name == &after[..close])
+                .map(|(_, value)| (close, *value))
+        });
+        match known {
+            Some((close, value)) => {
+                out.push_str(value);
+                rest = &after[close + 1..];
+            }
+            None => {
+                out.push('{');
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 fn bad(msg: impl std::fmt::Display) -> Exit {
     Exit::Usage(format!("invalid extension manifest: {msg}"))
 }
@@ -287,6 +516,8 @@ impl Manifest {
             session_context: Vec::new(),
             doctor: Vec::new(),
             conform: None,
+            recommend: Vec::new(),
+            conflict: Vec::new(),
         }
     }
 
@@ -366,6 +597,57 @@ impl Manifest {
             || self.bundle.is_some()
     }
 
+    /// Does the manifest use a section or key that v2 did not have?
+    fn uses_v3(&self) -> bool {
+        !self.recommend.is_empty() || !self.conflict.is_empty()
+    }
+
+    fn check_rules(&self) -> Result<(), Exit> {
+        let status_at = |level: Option<&ToolLevel>| level.is_some_and(|l| l.status.is_some());
+        for rule in &self.recommend {
+            check_template(&rule.reason, &[]).map_err(bad)?;
+            for c in &rule.when {
+                let (needed, label) = match c.signal {
+                    Signal::MachinePresent => (status_at(self.machine()), "machine"),
+                    Signal::RepoPresent => (status_at(self.repo_level()), "repo_level"),
+                    Signal::AdrFolder
+                    | Signal::ClaudeSetUp
+                    | Signal::CiPresent
+                    | Signal::LanguageSupported
+                    | Signal::RepoFileHere
+                    | Signal::Dep(_) => continue,
+                };
+                if !needed {
+                    return Err(bad(format!(
+                        "part {} uses a {label} signal but declares no [tool.{label}.status]",
+                        self.name()
+                    )));
+                }
+            }
+        }
+        for c in &self.conflict {
+            let (label_extra, warning_extra): (&[&str], &[&str]) = match &c.when {
+                ConflictWhen::Paths(paths) => {
+                    if paths.iter().any(|p| !stays_inside(p)) {
+                        return Err(bad(
+                            "a [[conflict]] path must be relative and stay inside the repository",
+                        ));
+                    }
+                    (&[], &PATHS_WARNING_PLACEHOLDERS)
+                }
+                ConflictWhen::GitConfig(_) => (&GIT_CONFIG_PLACEHOLDERS, &GIT_CONFIG_PLACEHOLDERS),
+                ConflictWhen::ForeignHooks => (&[], &[]),
+            };
+            if let Some(l) = &c.label {
+                check_template(l, label_extra).map_err(bad)?;
+            }
+            if let Some(w) = &c.warning {
+                check_template(w, warning_extra).map_err(bad)?;
+            }
+        }
+        Ok(())
+    }
+
     /// The checks a parsed manifest must pass; the catalog runs them on every
     /// part too.
     pub fn check(&self) -> Result<(), Exit> {
@@ -393,6 +675,19 @@ impl Manifest {
                 )));
             }
         }
+        if self.uses_v3() {
+            let Some(req) = &self.extension.harness else {
+                return Err(bad(
+                    "this manifest uses [[recommend]] or [[conflict]], so it must declare harness = \">=0.3\"",
+                ));
+            };
+            if satisfies(req, V2_HARNESS_VERSION)? {
+                return Err(bad(format!(
+                    "harness {req} is satisfied by 0.2, which does not know [[recommend]] and [[conflict]]; declare harness = \">=0.3\""
+                )));
+            }
+        }
+        self.check_rules()?;
         for related in [
             &self.extension.needs,
             &self.extension.enhances,
@@ -579,7 +874,7 @@ mod tests {
         assert!(Manifest::parse(&lax).is_err());
         let caret = V2.replace(">=0.2", "^0.1");
         assert!(Manifest::parse(&caret).is_err());
-        assert!(Manifest::parse(&V2.replace(">=0.2", "^0.2")).is_ok());
+        assert!(Manifest::parse(&V2.replace(">=0.2", ">=0.1")).is_err());
     }
 
     #[test]
@@ -608,7 +903,8 @@ mod tests {
         assert!(satisfies(">=0.1", now).unwrap());
         assert!(!satisfies("^0.1", now).unwrap());
         assert!(!satisfies("0.1", now).unwrap());
-        assert!(satisfies("^0.2", now).unwrap());
+        assert!(!satisfies("^0.2", now).unwrap());
+        assert!(satisfies("^0.3", now).unwrap());
         assert!(satisfies(">=0.1, <1", now).unwrap());
         assert!(!satisfies(">=9", now).unwrap());
         assert!(satisfies("nope", now).is_err());
@@ -654,5 +950,80 @@ mod tests {
         );
         assert!(Manifest::parse(&keep).is_ok());
         assert!(Manifest::parse(&keep.replace("args = [\"list\"]", "args = []")).is_err());
+    }
+
+    const V3: &str = "[extension]\nname = \"tool\"\nversion = \"1.0.0\"\nharness = \">=0.3\"\n\
+         [tool]\nbin = \"tool\"\n\
+         [tool.machine]\ninstall = [\"{bin}\", \"i\"]\nuninstall = [\"{bin}\", \"u\"]\n\
+         [tool.machine.status]\nargs = [\"s\"]\nexit = { present = 0, absent = 1 }\n\
+         [[recommend]]\nwhen = [\"machine_present\", \"!ci_present\", \"dep:@x/\"]\nverdict = \"already here\"\nreason = \"{part} in {ci}\"\n\
+         [[recommend]]\nwhen = []\nverdict = \"not useful\"\nreason = \"none\"\n\
+         [[conflict]]\npaths = [\".husky\"]\nlabel = \"husky\"\nwarning = \"{manager} in {part}\"\n\
+         [[conflict]]\ngit_config = \"core.hooksPath\"\nlabel = \"p={hooks_path}\"\n\
+         [[conflict]]\nforeign_hooks = true\n";
+
+    #[test]
+    fn recommend_and_conflict_load() {
+        let m = Manifest::parse(V3).unwrap();
+        assert_eq!(m.recommend.len(), 2);
+        assert_eq!(m.recommend[0].verdict, Verdict::AlreadyHere);
+        assert!(m.recommend[0].when[1].negated);
+        assert_eq!(m.recommend[0].when[2].signal, Signal::Dep("@x/".into()));
+        assert_eq!(m.conflict.len(), 3);
+        assert_eq!(
+            m.conflict[0].when,
+            ConflictWhen::Paths(vec![".husky".into()])
+        );
+        assert_eq!(
+            m.conflict[1].when,
+            ConflictWhen::GitConfig("core.hooksPath".into())
+        );
+        assert_eq!(m.conflict[2].when, ConflictWhen::ForeignHooks);
+    }
+
+    #[test]
+    fn bad_rules_are_refused() {
+        let refused = |text: String| assert!(Manifest::parse(&text).is_err(), "{text}");
+        refused(V3.replace("\"machine_present\"", "\"nonsense\""));
+        refused(V3.replace("\"machine_present\"", "\"greengate\""));
+        refused(V3.replace("{part} in {ci}", "{colour}"));
+        refused(V3.replace("{manager} in {part}", "{manager"));
+        refused(V3.replace("\"dep:@x/\"", "\"dep:\""));
+        refused(V3.replace(
+            "[tool.machine.status]\nargs = [\"s\"]\nexit = { present = 0, absent = 1 }\n",
+            "",
+        ));
+        refused(V3.replace("\"machine_present\"", "\"repo_present\""));
+        refused(V3.replace(">=0.3", ">=0.2"));
+        refused(V3.replace("harness = \">=0.3\"\n", ""));
+        refused(V3.replace(
+            "paths = [\".husky\"]",
+            "paths = [\".husky\"]\ngit_config = \"x\"",
+        ));
+        refused(V3.replace("paths = [\".husky\"]", "paths = [\"../x\"]"));
+        refused(V3.replace("verdict = \"not useful\"", "verdict = \"maybe\""));
+        // a placeholder outside the context that gives it a value
+        refused(V3.replace("{part} in {ci}", "{manager}"));
+        refused(V3.replace("{part} in {ci}", "{hooks_path}"));
+        refused(V3.replace("label = \"husky\"", "label = \"{manager}\""));
+        refused(V3.replace("{manager} in {part}", "{hooks_path} in {part}"));
+        // foreign hooks are labelled by grh: their text would be dropped
+        refused(V3.replace(
+            "foreign_hooks = true\n",
+            "foreign_hooks = true\nwarning = \"w\"\n",
+        ));
+        refused(V3.replace(
+            "foreign_hooks = true\n",
+            "foreign_hooks = true\nlabel = \"l\"\n",
+        ));
+    }
+
+    #[test]
+    fn render_substitutes_once_and_leaves_unknown_braces() {
+        let out = render(
+            "{part} {hooks_path} {x}",
+            &[("part", "p"), ("hooks_path", "{part}")],
+        );
+        assert_eq!(out, "p {part} {x}");
     }
 }
