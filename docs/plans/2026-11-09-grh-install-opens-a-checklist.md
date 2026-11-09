@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/install-checklist
 repos: [grh]
 adrs: [ADR-0064]
@@ -11,7 +11,7 @@ adrs: [ADR-0064]
 📄 Full reviews: [2026-11-09-grh-install-opens-a-checklist.reviews.md](2026-11-09-grh-install-opens-a-checklist.reviews.md)
 
 👉 **Decide:** none — approve if a pre-ticked checklist on a terminal, with experimental parts (router/relais) opt-in everywhere, is the right step 2c.
-📍 grh · nothing built · next: Phase 1, the experimental marker. Panel: backend, lang:rust, ux-research, game-ux, tui, architect (opus-5-5; four round-1 seats relaunched with no model after a rate limit).
+📍 grh · Phases 1–6 built and verified · next: land, merge, tag v0.4.0, then the day-7 outcome check. Panel: backend, lang:rust, ux-research, game-ux, tui, architect (opus-5-5; four round-1 seats relaunched with no model after a rate limit).
 **Changed by review:** all three streams must be terminals, with size and cursor fallbacks; SIGTERM/SIGHUP restore; a part that is not experimental may not need an experimental one; typed-ahead keys drained.
 **Verdicts:** round 1 approve-with-changes 6; round 2 approve-with-changes 5; 0 rework; 9 findings carried into implementation (listed in the full reviews).
 
@@ -136,7 +136,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
     gains a top-level `"experimental": ["router"]` list (schema stays 2,
     the field is additive);
   - installs by name, or ticked in the checklist, as today.
-    - can never be pulled in for another part: `Catalog::checked` refuses a
+  - can never be pulled in for another part: `Catalog::checked` refuses a
     part that is not experimental whose `needs` names one, so neither
     `--all` nor a tick can add it through `needs`.
   The retired-name hints are unchanged (they name members explicitly). The
@@ -184,7 +184,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
 - [x] Phase 5 — the carried 0.3.0 review lows: `src/audit.rs`,
   `src/manifest.rs`, `src/catalog.rs`, `src/install.rs`, `src/ops.rs`,
   `tests/cli.rs`, `tests/audit_golden.rs`.
-- [ ] Phase 6 — docs and release 0.4.0: `README.md`, `CHANGELOG.md`,
+- [x] Phase 6 — docs and release 0.4.0: `README.md`, `CHANGELOG.md`,
   `install/install.sh` (its next steps name the checklist), `Cargo.toml`,
   `Cargo.lock`.
 
@@ -212,7 +212,64 @@ is relais, today) is opt-in everywhere. The low findings carried from the
   `expected-new.json`; per-part verdicts are unchanged, so the 0.3.0 outcome
   diff still reads 0.
 
+- 2026-11-09 — a ticked experimental line shows `experiment` alone, and an
+  unticked one `experiment: not ticked by default` (tui review: a `[x]` row
+  must not say "not ticked"). The person's wording stays on the unticked box.
+- 2026-11-09 — a line audit finds `already here` shows `already here:
+  <reason>` and stays unticked (found in the person-like run: the bare `[ ]`
+  did not say the part was set up).
+- 2026-11-09 — `src/checklist.rs` keeps model, view and terminal together
+  while there is one screen; split it into model/view/term when a second
+  screen arrives (architect review).
+- 2026-11-09 — the doubled-enter pty test cannot place a second enter between
+  crossterm's read and the drain; the drain is covered by reasoning and by
+  that test's positive follow-up (`n` gives `nothing changed`, so `Proceed?`
+  waited) (backend review).
+- 2026-11-09 — warnings go through one `audit::print_warnings`, shared by
+  `grh audit` and the checklist path, which survives a closed stderr
+  (architect review); SIGINT sent as a signal restores the terminal and
+  exits 130, like the ctrl-c key (unix review).
+- 2026-11-09 — the review runs went through relais; three candidates were
+  salvaged by hand: Phase 3 (Cargo files are verification inputs relais
+  will not judge), Phase 5 (a manifest/receipt module cycle, fixed by
+  moving `Level` into manifest), and the dependency commit made by hand.
+- Carried, outside this plan: a pty test where audit raises a warning above
+  the checklist; `print_warnings` could move to a neutral output module.
+
 ## Verification
+
+Observed on the finished tree (2026-11-09):
+
+- Phase 1: manifest refusals under `>=0.3` and the `Catalog::checked`
+  refusal naming both parts → unit tests green; `--all --yes` in the cli
+  fixture leaves the experiment out with `left out: … (an experiment:
+  install it by name)` and installs it by name → green; the goldens with
+  `claude_setup`'s install line updated and `"experimental": ["router"]` in
+  the JSON → green.
+- Phase 2: the 13 goldens unchanged; `assess` unit tests on a temporary
+  repository and outside one (`Ok(None)`) → green.
+- Phase 3: 17 state-machine and `TestBackend` tests at 80x24, 60 columns and
+  80x10, with colour off (reversed, `> `, every state a word) → green; the
+  experiment guard's test proven red with the guard removed.
+- Phase 4: off a terminal, `--yes` alone, stdout or stderr redirected → the
+  listing, exit 2; 8 pty tests (space+enter+`n`, doubled enter, q, ctrl-c
+  130, SIGINT 130, SIGTERM 143 in the checklist and at `Proceed?`, a 6-row
+  pty with the two-line too-small notice), each followed by `stty -a`
+  showing `icanon` and `echo` → green.
+- Phase 5: the 80-column test, the git-config failure test, `Vec<Level>`,
+  `Signal::scope`, one git helper, the renamed loop variable → green.
+- Phase 6: 184 tests, clippy `-D warnings`, fmt → green; release binary
+  3,821,488 bytes vs 0.3.0's 3,570,128 (+251 KB, +7%), release build 195 s;
+  `scripts/e2e.sh` against the real releases → exit 0 (`left out: router`,
+  then `router installed by name`); `install.sh` next steps name the
+  checklist; a person-like run of the release binary in a 24x100 pty in a
+  scratch repository → the checklist opened, greengate and greenpiste showed
+  `already here: …` unticked, `j` + space ticked greenpiste, enter printed
+  `grh install greenpiste --repo`, the plan and `Proceed? [y/N]`, `n` gave
+  `nothing changed`, exit 0. `cargo +1.89 check` and `cargo deny check` are
+  run by CI (the `msrv` and `deny` jobs): neither tool is installed here; the
+  66 new crates' licences were read against `deny.toml` by hand and
+  `unicode-width` pinned to 0.2.2 (0.2.3 was under two weeks old).
 
 - Phase 1: a manifest with `experimental = true` under `harness = ">=0.3"`
   is refused; under `>=0.4` it loads; a fixture catalog where a part that is
@@ -249,6 +306,14 @@ is relais, today) is opt-in everywhere. The low findings carried from the
   terminal of `grh install` in a scratch repository (pre-ticks, toggle,
   enter, `n`) is recorded with what it showed; `install.sh` run from a
   scratch HOME prints the new next steps.
+
+## Implementation review
+
+- implementation-review: approve-with-changes → approve-with-changes (experiment guard restored, red-proven) → approve; 46k/35 s, 58k/76 s, 25k/21 s.
+- backend approve-with-changes ×2 → approve (warnings shown, unavailable error named and tested); 52k/61 s, 46k/48 s, 20k/19 s.
+- lang:rust approve-with-changes → approve (one panic hook, signal unwind, display width, pub(crate)); 62k/67 s, 42k/32 s.
+- unix approve-with-changes ×2 → approve (SIGINT restores, quoted command); tui approve-with-changes → approve (command carries every flag); 55k/47 s, 41k/22 s, 21k/22 s; 42k/44 s, 41k/15 s.
+- architect approve-with-changes ×3 (one experiments list, one command helper, one warning printer; split deferred, logged); 44k/43 s, 43k/48 s, 27k/19 s.
 
 ## Outcome
 
