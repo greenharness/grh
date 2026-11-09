@@ -1,0 +1,70 @@
+{
+  "adr_folder": null,
+  "ci": [],
+  "claude": {
+    "amont_agent": "present",
+    "aval_mcp": false,
+    "files": [
+      "AGENTS.md"
+    ],
+    "relais": "present"
+  },
+  "dir": "<dir>",
+  "duro": false,
+  "extras": [
+    "workflow"
+  ],
+  "hooks": [],
+  "install": "grh install solo workflow",
+  "languages": {
+    "other": 1
+  },
+  "parts": [
+    {
+      "part": "gate",
+      "reason": "a git repository: gate its commits and pushes",
+      "verdict": "recommend"
+    },
+    {
+      "part": "guardrails",
+      "reason": "amont-agent's integration is installed",
+      "verdict": "already here"
+    },
+    {
+      "part": "decisions",
+      "reason": "no ADR folder",
+      "verdict": "not useful"
+    },
+    {
+      "part": "conform",
+      "reason": "no ADR folder to conform to",
+      "verdict": "not useful"
+    },
+    {
+      "part": "router",
+      "reason": "relais's integration is installed",
+      "verdict": "already here"
+    },
+    {
+      "part": "attest",
+      "reason": "no CI workflows",
+      "verdict": "not useful"
+    },
+    {
+      "part": "workflow",
+      "reason": "Claude Code is set up: release and merge skills",
+      "verdict": "recommend"
+    },
+    {
+      "part": "design",
+      "reason": "no @duro-app/ dependency",
+      "verdict": "not useful"
+    }
+  ],
+  "profile": "solo",
+  "profile_parts": [
+    "gate",
+    "guardrails"
+  ],
+  "warnings": []
+}

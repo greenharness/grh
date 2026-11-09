@@ -1,0 +1,6 @@
+#!/bin/sh
+# A stub router: answers `doctor --json` from STUB_RELAIS (default absent).
+case "$*" in
+  "doctor --json") printf '{"integration":{"state":"%s"}}\n' "${STUB_RELAIS:-absent}" ;;
+  *) exit 0 ;;
+esac
