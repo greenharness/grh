@@ -1,5 +1,5 @@
 ---
-status: active
+status: done
 branch: feat/pinned-manifests
 repos: [grh, decisions]
 adrs: [ADR-0064]
@@ -11,7 +11,7 @@ adrs: [ADR-0064]
 📄 Full reviews: [2026-11-09-grh-pins-manifests-parts-ship.reviews.md](2026-11-09-grh-pins-manifests-parts-ship.reviews.md)
 
 👉 **Decide:** none — approve if pinned manifests built into grh, with a `pins` example and a CI re-check, is the right close of build step 2.
-📍 grh, decisions · nothing built · next: Phase 1, the pinned form. Panel: backend, lang:rust, platform, architect, unix (opus-5-5).
+📍 grh, decisions · Phases 1–3 built and verified · next: land grh, then decisions; build step 3 ships the first pins. Panel: backend, lang:rust, platform, architect, unix (opus-5-5).
 **Changed by review:** pins resolved before `checked()`; a pin also checks `[tool.release]` version and repo; the shell scripts became a `pins` example on grh's fetch code; typed download failures so unreachable (3) is never a mismatch (1).
 **Verdicts:** round 1 approve-with-changes 5; round 2 approve-with-changes 5; final-body check approve 1, approve-with-changes 2; 0 rework; 16 findings carried into implementation (listed in the full reviews).
 
@@ -178,6 +178,14 @@ sees. It closes build step 2 (grh goes generic).
   refusal unit tests, which were written by hand); Phase 2's first candidate
   was revised once (a retry-delay variable reachable in release builds, the
   pin checks duplicated outside the catalog).
+- 2026-11-09 — implementation review (round 1, delta) changed: 401, 403
+  and 429 count as unreachable (a rate limit is GitHub's trouble, not a
+  mismatch); `check` loads the catalog through `parse_with` first; one
+  `catalog_location()`; tests pass explicit fetch options instead of
+  setting the environment. Carried, outside this plan: `download_with_options`
+  still starts from `Routes::from_env()` before overriding (reads, does not
+  depend on, the environment); `pins -- --help` names `--` as an unknown
+  option (exit 2, cosmetic); the pre-existing `v` bindings in tests/cli.rs.
 - 2026-11-09 — the pin and check tools are a cargo example reusing
   `src/fetch.rs`, not shell scripts (panel: shell TOML parsing, the sha256
   tool on macOS, retries through a GitHub outage and atomic writes all come
@@ -213,8 +221,20 @@ Observed on the finished tree (2026-11-09):
   `SHA256SUMS`, the version guard and the no-re-upload rule; the programme
   map says build step 2 is done and names step 3 (decisions, `relais
   programme check` exit 0); `scripts/e2e.sh` against the real releases
-  installs every part and leaves HOME as it found it (exit 0); 201 tests,
-  clippy `-D warnings` and fmt green.
+  installs every part and leaves HOME as it found it (exit 0).
+- After the implementation review (7228fd7): 207 tests, clippy `-D
+  warnings` and fmt green; new tests: web 503 plus API 403 gives exit 3,
+  the 503 server counts 3 attempts, a catalog with two pins of one name is
+  refused before any download (0 requests), an uppercase pinned sha256 is
+  accepted, `pin` refuses an asset with `..` and a repo without exactly one
+  `/`, the embedded copies equal the repository's `manifests/`; `grep
+  set_var tests/pins.rs src/pins.rs` finds nothing.
+- Not observed: editing a copy rebuilds the binary (`rerun-if-changed`, no
+  test); refusal checks proven red by removing them: 2 of 12 (`published`,
+  `[tool.release] repo`); the CI OS matrix and the `pinned manifests` job:
+  read on the pull request after the push.
+
+### Planned (the reviewed contract)
 
 - Phase 1: unit tests load a fixture catalog with one pin and its copy (the
   part is in `parts`, `order` names it, an inline part `needs` it and
@@ -246,9 +266,17 @@ Observed on the finished tree (2026-11-09):
   and name step 3 next; `scripts/e2e.sh` against the real releases installs
   every part and leaves the scratch HOME as it found it (exit 0).
 
+## Implementation review
+
+- implementation-review: approve-with-changes → approve-with-changes (record honesty, fixed here); 39k/27 s, 37k/46 s.
+- backend approve-with-changes → approve (403 is unreachable, attempts counted, catalog checked first); 54k/77 s, 32k/27 s.
+- lang:rust approve-with-changes → approve (no env mutation in tests, hidden test hooks, sha case, Error impls, input validation); 55k/37 s, 40k/34 s.
+- unix approve-with-changes → approve (usage exit for a bad name, help after `--`); architect approve-with-changes → approve (one catalog location, embedded-names test); platform approve (timeout, env var); 31k/26 s, 27k/18 s; 38k/36 s, 27k/19 s; 27k/29 s.
+- decisions: implementation-review approve-with-changes (land grh before the map note; done by the merge order); 45k/21 s.
+
 ## Outcome
 
-The first pins land with step 3: `cargo run --example pins -- check` green on the
+The first pins land with step 3: `cargo run --locked --example pins -- check` green on the
 release that pins greengate and greenpiste, and `grh status` gives the same
 per-part answers before and after the move (`scripts/outcome-diff.sh`, 0
 verdict differences).
