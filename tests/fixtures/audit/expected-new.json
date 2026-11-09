@@ -21,7 +21,7 @@
   },
   "claude_setup": {
     "hooks": [],
-    "install": "grh install greengate greenpiste router workflow"
+    "install": "grh install greengate greenpiste workflow"
   },
   "duro": {
     "hooks": [],

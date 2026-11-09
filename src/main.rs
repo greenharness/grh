@@ -26,7 +26,7 @@ enum Command {
     Install {
         /// The parts to install (run `grh install` alone to list them).
         names: Vec<String>,
-        /// Install every published part, with what each needs.
+        /// Install every published part but the experiments, with what each needs.
         #[arg(long)]
         all: bool,
         /// Also set up the current repository (what each part places there).

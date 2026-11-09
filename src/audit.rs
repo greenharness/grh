@@ -381,9 +381,16 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
             }
         })
         .collect();
+    let is_experiment = |name: &str| cat.part(name).is_some_and(|p| p.is_experimental());
     let recommended: Vec<&str> = rows
         .iter()
-        .filter(|r| r.verdict == Verdict::Recommend)
+        .filter(|r| r.verdict == Verdict::Recommend && !is_experiment(r.part))
+        .map(|r| r.part)
+        .collect();
+    let experiments = cat.experimental_names();
+    let recommended_experiments: Vec<&str> = rows
+        .iter()
+        .filter(|r| r.verdict == Verdict::Recommend && is_experiment(r.part))
         .map(|r| r.part)
         .collect();
     let install =
@@ -444,6 +451,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
                 "part": r.part, "verdict": r.verdict.as_str(), "reason": r.reason
             })).collect::<Vec<_>>(),
             "install": install,
+            "experimental": experiments,
             "warnings": warnings,
         });
         let text = serde_json::to_string_pretty(&doc)
@@ -461,6 +469,11 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         })
         .collect();
     lines.push(install.unwrap_or_else(|| "nothing to install".to_string()));
+    for name in recommended_experiments {
+        lines.push(format!(
+            "{name} is an experiment: grh install {name} to try it"
+        ));
+    }
     let printed = print_lines(&lines);
     // A closed stderr is no reason to fail or panic: the rows are written.
     let stderr = std::io::stderr();

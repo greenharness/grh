@@ -132,8 +132,10 @@ impl Catalog {
     /// `needs` and `enhances` names a part, and every retired name is no part
     /// name or alias and lists published parts only; no cycle runs
     /// through `needs` and `enhances` together; every part is in `order` and
-    /// every edge points to an earlier entry. So `resolve` can walk the
-    /// graph without a lookup that could fail.
+    /// every edge points to an earlier entry; no part that is not
+    /// experimental needs an experimental one. So `resolve` can walk the
+    /// graph without a lookup that could fail, and never adds an experiment
+    /// for another part.
     fn checked(self) -> Result<Catalog, Exit> {
         for part in &self.parts {
             part.check()
@@ -186,6 +188,20 @@ impl Catalog {
                         part.name()
                     )));
                 }
+            }
+        }
+        for part in self.parts.iter().filter(|p| !p.is_experimental()) {
+            if let Some(need) = part
+                .needs()
+                .iter()
+                .filter_map(|n| self.part(n))
+                .find(|n| n.is_experimental())
+            {
+                return Err(invalid(format!(
+                    "{} needs {}, which is experimental; only an experimental part may need one",
+                    part.name(),
+                    need.name()
+                )));
             }
         }
         for (retired, members) in &self.retired_names {
@@ -351,11 +367,21 @@ impl Catalog {
         }
     }
 
-    /// The published parts, by name, in catalog order.
-    pub fn published_names(&self) -> Vec<String> {
+    /// The published parts that are not experiments, by name, in catalog
+    /// order: what `install --all` installs.
+    pub fn all_names(&self) -> Vec<String> {
         self.parts
             .iter()
-            .filter(|p| p.is_published())
+            .filter(|p| p.is_published() && !p.is_experimental())
+            .map(|p| p.name().to_string())
+            .collect()
+    }
+
+    /// The published experimental parts, by name, in catalog order.
+    pub fn experimental_names(&self) -> Vec<String> {
+        self.parts
+            .iter()
+            .filter(|p| p.is_published() && p.is_experimental())
             .map(|p| p.name().to_string())
             .collect()
     }
@@ -377,7 +403,7 @@ impl Catalog {
                 "profiles were removed in 0.3.0.\n  to remove what {name} installed: grh uninstall {members}"
             ),
             Verb::Install | Verb::Dispatch => format!(
-                "profiles were removed in 0.3.0.\n  to install what {name} installed: grh install {members}\n  or every part: grh install --all"
+                "profiles were removed in 0.3.0.\n  to install what {name} installed: grh install {members}\n  or every part but the experiments: grh install --all"
             ),
         })
     }
@@ -483,6 +509,19 @@ mod tests {
     }
 
     #[test]
+    fn a_part_that_is_not_experimental_may_not_need_an_experimental_one() {
+        let source = fixture(
+            &["a", "b"],
+            &[("a", &[], &[], &[]), ("b", &["a"], &[], &[])],
+        )
+        .replace(">=0.2", ">=0.4")
+        .replace("name = \"a\"\n", "name = \"a\"\nexperimental = true\n");
+        refused(&source, &["b needs a, which is experimental"]);
+        let both = source.replace("name = \"b\"\n", "name = \"b\"\nexperimental = true\n");
+        assert!(Catalog::parse(&both).is_ok());
+    }
+
+    #[test]
     fn a_path_signal_with_no_audit_paths_is_refused() {
         let rule = "[[part.recommend]]\nwhen = [\"ci_present\"]\nverdict = \"recommend\"\nreason = \"ci\"\n";
         let source = fixture(&["a"], &[("a", &[], &[], &[])]).replace(">=0.2", ">=0.3") + rule;
@@ -585,7 +624,7 @@ mod tests {
         let notice = c.retired_notice(&args(&["solo"]), Verb::Install).unwrap();
         assert_eq!(
             notice,
-            "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenpiste\n  or every part: grh install --all"
+            "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenpiste\n  or every part but the experiments: grh install --all"
         );
         let notice = c
             .retired_notice(&args(&["greengate", "solo"]), Verb::Uninstall)
@@ -599,11 +638,11 @@ mod tests {
     }
 
     #[test]
-    fn published_names_leave_out_an_unpublished_part() {
+    fn all_names_leave_out_an_unpublished_part() {
         let source = fixture(&["a", "b"], &[("a", &[], &[], &[]), ("b", &[], &[], &[])])
             .replace("name = \"b\"\n", "name = \"b\"\npublished = false\n");
         let c = Catalog::parse(&source).unwrap();
-        assert_eq!(c.published_names(), ["a"]);
+        assert_eq!(c.all_names(), ["a"]);
     }
 
     #[test]

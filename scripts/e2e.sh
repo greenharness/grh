@@ -101,11 +101,24 @@ grh status --json > "$scratch/status.json"
 python3 - "$scratch/status.json" <<'PY'
 import json, sys
 parts = json.load(open(sys.argv[1]))["parts"]
-want = {"decisions", "greengate", "greenpiste", "router", "conform"}
+want = {"decisions", "greengate", "greenpiste", "conform"}
+if any(p["name"] == "router" and p["installed"] for p in parts):
+    sys.exit("router (an experiment) was installed by --all")
 bad = [p["name"] for p in parts if p["name"] in want and not (p["installed"] and p["source"] == "placed")]
 if bad:
     sys.exit(f"not installed and placed: {bad}")
 print("every part installed and placed")
+PY
+
+step "an experimental part installs by name, after --all"
+(cd "$repo" && grh install router --repo --yes)
+grh status --json > "$scratch/status.json"
+python3 - "$scratch/status.json" <<'PY'
+import json, sys
+parts = json.load(open(sys.argv[1]))["parts"]
+if not any(p["name"] == "router" and p["installed"] and p["source"] == "placed" for p in parts):
+    sys.exit("router is not installed by name")
+print("router installed by name")
 PY
 
 step "a part answers through grh"

@@ -233,7 +233,8 @@ reason = "no ADR folder to conform to"
 [part.extension]
 name = "router"
 version = "0.39.0"
-harness = ">=0.3"
+harness = ">=0.4"
+experimental = true
 summary = "which model runs a bounded task, verified and accounted"
 needs = []
 

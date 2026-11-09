@@ -185,7 +185,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
     if opts.all && !opts.names.is_empty() {
         return Err(Exit::Usage(
-            "--all installs every published part; name no parts with it".into(),
+            "--all installs every published part but the experiments; name no parts with it".into(),
         ));
     }
     let ui = Ui::new(opts.quiet);
@@ -194,7 +194,7 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
     cat.warn_aliases(&ui, &opts.names, Verb::Install);
     let wanted = if opts.all {
-        cat.published_names()
+        cat.all_names()
     } else {
         opts.names.clone()
     };
@@ -203,6 +203,13 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         .map_err(|Unknown::Name(n)| Exit::Usage(format!("unknown part: {n}\n{}", listing(cat))))?;
     let repo = if opts.repo { Some(git_root()?) } else { None };
     plan(&ui, &parts, repo.as_deref());
+    let left_out = cat.experimental_names();
+    if opts.all && !left_out.is_empty() {
+        ui.say(&format!(
+            "left out: {} (an experiment: install it by name)",
+            left_out.join(", ")
+        ));
+    }
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());

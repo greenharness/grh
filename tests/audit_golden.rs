@@ -157,6 +157,15 @@ fn git(repo: &Path, args: &[&str]) {
 /// Run `grh audit --json` with `bin` on the fixture, under a scratch HOME and a
 /// PATH of the stub tools, and return the document with `dir` replaced.
 fn audit(bin: &Path, fx: &Fixture) -> Value {
+    let stdout = run_audit(bin, fx, &["audit", "--json"]);
+    let mut doc: Value = serde_json::from_slice(&stdout)
+        .unwrap_or_else(|e| panic!("{}: audit printed no JSON: {e}", fx.name));
+    doc["dir"] = Value::String("<dir>".into());
+    doc
+}
+
+/// Run `grh` with `args` on the fixture and return its stdout.
+fn run_audit(bin: &Path, fx: &Fixture, args: &[&str]) -> Vec<u8> {
     let scratch = tempfile::tempdir().expect("tempdir");
     let repo = scratch.path().join("repo");
     let home = scratch.path().join("home");
@@ -173,7 +182,7 @@ fn audit(bin: &Path, fx: &Fixture) -> Value {
     }
     let stubs = fixtures_dir().join("bin");
     let out = Command::new(bin)
-        .args(["audit", "--json"])
+        .args(args)
         .current_dir(&repo)
         .env_clear()
         .env("HOME", &home)
@@ -188,10 +197,7 @@ fn audit(bin: &Path, fx: &Fixture) -> Value {
         fx.name,
         String::from_utf8_lossy(&out.stderr)
     );
-    let mut doc: Value = serde_json::from_slice(&out.stdout)
-        .unwrap_or_else(|e| panic!("{}: audit printed no JSON: {e}", fx.name));
-    doc["dir"] = Value::String("<dir>".into());
-    doc
+    out.stdout
 }
 
 /// Rename the 0.2.0 part names to the catalog's current ones.
@@ -246,6 +252,12 @@ fn audit_reproduces_the_goldens_recorded_from_0_2_0() {
             fx.name
         );
         assert_eq!(got["hooks"], new["hooks"], "fixture {}: hooks", fx.name);
+        assert_eq!(
+            got["experimental"],
+            serde_json::json!(["router"]),
+            "fixture {}: experimental",
+            fx.name
+        );
     }
 }
 
@@ -297,4 +309,28 @@ fn a_status_query_without_an_answer_warns_that_its_row_reads_it_absent() {
         .find(|r| r["part"] == "greengate")
         .unwrap();
     assert_eq!(row["verdict"], "recommend");
+}
+
+#[test]
+fn the_text_audit_names_a_recommended_experiment_after_the_install_line() {
+    let fx = FIXTURES
+        .iter()
+        .find(|fx| fx.name == "claude_setup")
+        .expect("the claude_setup fixture");
+    let bin = Path::new(env!("CARGO_BIN_EXE_grh"));
+    let text = String::from_utf8(run_audit(bin, fx, &["audit"])).unwrap();
+    let lines: Vec<&str> = text.lines().collect();
+    let install = expected_new()[fx.name]["install"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let at = lines
+        .iter()
+        .position(|l| *l == install)
+        .unwrap_or_else(|| panic!("no install line {install:?} in {text}"));
+    assert_eq!(
+        lines.get(at + 1),
+        Some(&"router is an experiment: grh install router to try it"),
+        "{text}"
+    );
 }

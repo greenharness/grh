@@ -163,7 +163,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
 
 ## Phases
 
-- [ ] Phase 1 — experimental parts: the manifest field and harness 0.4,
+- [x] Phase 1 — experimental parts: the manifest field and harness 0.4,
   router marked, `--all` and audit's install line leave it out through one `Part::is_experimental` (read by install, audit and the checklist), `Catalog::checked` refuses a non-experimental part whose `needs` names an experimental one, JSON
   `experimental`, e2e installs router by name after `--all`:
   `src/manifest.rs`, `src/catalog.rs`, `catalog.toml`, `src/install.rs`,

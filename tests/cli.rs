@@ -102,7 +102,7 @@ impl Fx {
         );
         catalog.push_str(&format!(
             "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\nforeign_markers = [\"relais:begin\"]\n\
-             order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\"]\n\
+             order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\", \"lab\"]\n\
              [retired_names]\nsolo = [\"gate\", \"guardrails\"]\n",
             sha256_hex(&skills)
         ));
@@ -183,7 +183,9 @@ impl Fx {
              [[part.repo_file]]\ndirs = [\".forgejo\", \".github\"]\npath = \"workflows/attest.yml\"\n\
              content = \"name: attest\\non:\\n  pull_request:\\njobs:\\n  attest:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: fredericrous/attest@v1\\n\"\n\
              [[part]]\n[part.extension]\nname = \"design\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
-             summary = \"x\"\nneeds = []\npublished = false\n",
+             summary = \"x\"\nneeds = []\npublished = false\n\
+             [[part]]\n[part.extension]\nname = \"lab\"\nversion = \"1.0.0\"\nharness = \">=0.4\"\n\
+             summary = \"x\"\nneeds = []\nexperimental = true\n",
         );
         put(&fx.root.join("catalog.toml"), catalog.as_bytes());
         fx
@@ -446,11 +448,13 @@ fn a_retired_name_exits_2_with_the_hint_and_changes_nothing() {
     for (args, expected) in [
         (
             &["install", "solo", "--yes"][..],
-            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
+            hint("install", "install", "gate guardrails")
+                + "\n  or every part but the experiments: grh install --all",
         ),
         (
             &["install", "solo", "gate", "--yes"],
-            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
+            hint("install", "install", "gate guardrails")
+                + "\n  or every part but the experiments: grh install --all",
         ),
         (
             &["uninstall", "solo", "--yes"],
@@ -481,6 +485,15 @@ fn all_with_yes_installs_every_published_part() {
         );
     }
     assert!(!receipt.contains("design"), "{receipt}");
+    assert!(!receipt.contains("lab"), "{receipt}");
+    assert!(
+        err(&o).contains("left out: lab (an experiment: install it by name)"),
+        "{}",
+        err(&o)
+    );
+    let named = fx.grh("work", &[], &["install", "lab", "--yes"]);
+    assert_eq!(code(&named), 0, "{}", err(&named));
+    assert!(err(&named).contains("lab: x"), "{}", err(&named));
     let entries = fx.entries();
     assert_eq!(
         code(&fx.grh("work", &[], &["install", "--all", "--yes"])),
