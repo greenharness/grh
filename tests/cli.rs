@@ -102,7 +102,7 @@ impl Fx {
         );
         catalog.push_str(&format!(
             "skills_repo = \"greenharness/skills\"\nskills_version = \"0.1.0\"\nskills_sha256 = \"{}\"\nforeign_markers = [\"relais:begin\"]\n\
-             order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\"]\n\
+             order = [\"decisions\", \"gate\", \"guardrails\", \"attest\", \"design\", \"lab\"]\n\
              [retired_names]\nsolo = [\"gate\", \"guardrails\"]\n",
             sha256_hex(&skills)
         ));
@@ -183,7 +183,9 @@ impl Fx {
              [[part.repo_file]]\ndirs = [\".forgejo\", \".github\"]\npath = \"workflows/attest.yml\"\n\
              content = \"name: attest\\non:\\n  pull_request:\\njobs:\\n  attest:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: fredericrous/attest@v1\\n\"\n\
              [[part]]\n[part.extension]\nname = \"design\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
-             summary = \"x\"\nneeds = []\npublished = false\n",
+             summary = \"x\"\nneeds = []\npublished = false\n\
+             [[part]]\n[part.extension]\nname = \"lab\"\nversion = \"1.0.0\"\nharness = \">=0.4\"\n\
+             summary = \"x\"\nneeds = []\nexperimental = true\n",
         );
         put(&fx.root.join("catalog.toml"), catalog.as_bytes());
         fx
@@ -414,21 +416,70 @@ fn without_yes_on_a_non_tty_nothing_changes() {
 }
 
 #[test]
-fn a_bare_install_lists_parts_and_exits_2() {
+fn the_all_failure_and_the_listing_heading_fit_in_80_columns() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install"]);
-    assert_eq!(code(&o), 2);
-    assert!(err(&o).contains("gate") && err(&o).contains("--all"));
-    assert!(
-        !err(&o).contains("solo") && !err(&o).contains("profile"),
-        "{}",
-        err(&o)
-    );
-    assert!(o.stdout.is_empty());
+    let output = fx.grh("work", &[], &["install", "--all", "gate", "--yes"]);
+    assert_eq!(code(&output), 2);
+    let message = err(&output);
+    assert!(message.contains("name no parts with it"), "{message}");
+    for line in message.lines() {
+        assert!(line.chars().count() <= 80, "too wide: {line}");
+    }
+    let output = fx.grh("work", &[], &["install"]);
+    let listing = err(&output);
+    let heading: Vec<&str> = listing.lines().take_while(|l| *l != "parts:").collect();
+    assert!(heading.len() >= 2, "{listing}");
+    assert!(heading.iter().any(|l| l.contains("grh install --all")));
+    for line in heading {
+        assert!(line.chars().count() <= 80, "too wide: {line}");
+    }
 }
 
-fn out(o: &Output) -> String {
-    String::from_utf8_lossy(&o.stdout).into_owned()
+#[test]
+fn a_bare_install_lists_parts_and_exits_2() {
+    let fx = Fx::new();
+    let output = fx.grh("work", &[], &["install"]);
+    assert_eq!(code(&output), 2);
+    assert!(err(&output).contains("gate") && err(&output).contains("--all"));
+    assert!(
+        !err(&output).contains("solo") && !err(&output).contains("profile"),
+        "{}",
+        err(&output)
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn a_bare_install_with_yes_still_lists_parts_and_exits_2() {
+    let fx = Fx::new();
+    let output = fx.grh("work", &[], &["install", "--yes"]);
+    assert_eq!(code(&output), 2);
+    assert!(err(&output).contains("--all"), "{}", err(&output));
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn a_bare_install_with_stdout_in_a_file_leaves_the_file_empty() {
+    let fx = Fx::new();
+    let file = fs::File::create(fx.p("stdout.txt")).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_grh"))
+        .arg("install")
+        .current_dir(fx.p("work"))
+        .env_clear()
+        .env("HOME", fx.p("home"))
+        .env("XDG_STATE_HOME", fx.p("state"))
+        .env("GRH_CATALOG", fx.p("catalog.toml"))
+        .stdin(Stdio::null())
+        .stdout(file)
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 2);
+    assert!(err(&output).contains("--all"), "{}", err(&output));
+    assert_eq!(fs::read_to_string(fx.p("stdout.txt")).unwrap(), "");
+}
+
+fn out(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 #[test]
@@ -446,21 +497,27 @@ fn a_retired_name_exits_2_with_the_hint_and_changes_nothing() {
     for (args, expected) in [
         (
             &["install", "solo", "--yes"][..],
-            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
+            hint("install", "install", "gate guardrails")
+                + "\n  or every part but the experiments: grh install --all",
         ),
         (
             &["install", "solo", "gate", "--yes"],
-            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
+            hint("install", "install", "gate guardrails")
+                + "\n  or every part but the experiments: grh install --all",
         ),
         (
             &["uninstall", "solo", "--yes"],
             hint("uninstall", "remove", "gate guardrails"),
         ),
     ] {
-        let o = fx.grh("work", &[], args);
-        assert_eq!(code(&o), 2, "{args:?}: {}", err(&o));
-        assert!(err(&o).contains(&expected), "{args:?}: {}", err(&o));
-        assert!(out(&o).is_empty(), "{args:?}: {}", out(&o));
+        let output = fx.grh("work", &[], args);
+        assert_eq!(code(&output), 2, "{args:?}: {}", err(&output));
+        assert!(
+            err(&output).contains(&expected),
+            "{args:?}: {}",
+            err(&output)
+        );
+        assert!(out(&output).is_empty(), "{args:?}: {}", out(&output));
         assert_eq!(fx.receipt(), receipt);
         assert_eq!(fx.log(), log);
         assert_eq!(fx.files("bin"), files);
@@ -470,8 +527,8 @@ fn a_retired_name_exits_2_with_the_hint_and_changes_nothing() {
 #[test]
 fn all_with_yes_installs_every_published_part() {
     let fx = Fx::new();
-    let o = fx.grh("work", &[], &["install", "--all", "--yes"]);
-    assert_eq!(code(&o), 0, "{}", err(&o));
+    let output = fx.grh("work", &[], &["install", "--all", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
     assert_eq!(fx.files("bin"), ["amont", "amont-agent", "aval"]);
     let receipt = fx.receipt();
     for part in ["decisions", "gate", "guardrails"] {
@@ -481,6 +538,15 @@ fn all_with_yes_installs_every_published_part() {
         );
     }
     assert!(!receipt.contains("design"), "{receipt}");
+    assert!(!receipt.contains("lab"), "{receipt}");
+    assert!(
+        err(&output).contains("left out: lab (an experiment: install it by name)"),
+        "{}",
+        err(&output)
+    );
+    let named = fx.grh("work", &[], &["install", "lab", "--yes"]);
+    assert_eq!(code(&named), 0, "{}", err(&named));
+    assert!(err(&named).contains("lab: x"), "{}", err(&named));
     let entries = fx.entries();
     assert_eq!(
         code(&fx.grh("work", &[], &["install", "--all", "--yes"])),

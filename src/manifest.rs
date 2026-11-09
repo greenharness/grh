@@ -10,14 +10,37 @@ use serde::{Deserialize, Serialize};
 
 use crate::exit::Exit;
 
+/// The level a tool installs at, as the manifest's status queries, the audit
+/// and the receipt name it. The receipt re-exports it, so the receipt depends
+/// on the manifest and never the reverse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Level {
+    Machine,
+    Repo,
+}
+
+impl Level {
+    /// The level as the audit and the receipt name it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Level::Machine => "machine",
+            Level::Repo => "repo",
+        }
+    }
+}
+
 /// The harness version this grh answers to in `[extension] harness`.
-pub const HARNESS_VERSION: (u64, u64, u64) = (0, 3, 0);
+pub const HARNESS_VERSION: (u64, u64, u64) = (0, 4, 0);
 
 /// The last harness version that knew only the v1 sections and keys.
 const V1_HARNESS_VERSION: (u64, u64, u64) = (0, 1, 0);
 
 /// The last harness version that knew only the v2 sections and keys.
 const V2_HARNESS_VERSION: (u64, u64, u64) = (0, 2, 0);
+
+/// The last harness version that knew only the v3 sections and keys.
+const V3_HARNESS_VERSION: (u64, u64, u64) = (0, 3, 0);
 
 pub const FILE_NAME: &str = "greenharness.toml";
 
@@ -64,6 +87,9 @@ pub struct Extension {
     pub hint: Option<String>,
     /// `false` until the part's manifest is released; absent means published.
     pub published: Option<bool>,
+    /// `true` when the part is an experiment: left out of `install --all`
+    /// and of audit's install line. Needs harness >=0.4.
+    pub experimental: Option<bool>,
 }
 
 /// The binary a part installs, where its release lives, and the commands of
@@ -254,7 +280,63 @@ pub enum Signal {
     Dep(String),
 }
 
+/// The `[audit]` path list a repository signal reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditList {
+    AdrFolder,
+    ClaudeSetUp,
+    CiPresent,
+}
+
+impl AuditList {
+    /// The list's key under `[audit]`, which is also its signal's name.
+    pub fn name(self) -> &'static str {
+        match self {
+            AuditList::AdrFolder => "adr_folder",
+            AuditList::ClaudeSetUp => "claude_set_up",
+            AuditList::CiPresent => "ci_present",
+        }
+    }
+}
+
+/// What a signal is a fact about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scope {
+    /// One part: its status query at this level answered `present`.
+    PartStatus(Level),
+    /// One part: its repo file sits in a CI folder here.
+    PartFile,
+    /// The repository, read from the files of an `[audit]` list.
+    RepositoryPaths(AuditList),
+    /// The repository, read some other way.
+    Repository,
+}
+
+impl Scope {
+    /// Does the signal hold for one part rather than for the repository?
+    pub fn is_per_part(self) -> bool {
+        match self {
+            Scope::PartStatus(_) | Scope::PartFile => true,
+            Scope::RepositoryPaths(_) | Scope::Repository => false,
+        }
+    }
+}
+
 impl Signal {
+    /// What this signal is a fact about, and for the path signals which
+    /// `[audit]` list it reads.
+    pub fn scope(&self) -> Scope {
+        match self {
+            Signal::MachinePresent => Scope::PartStatus(Level::Machine),
+            Signal::RepoPresent => Scope::PartStatus(Level::Repo),
+            Signal::RepoFileHere => Scope::PartFile,
+            Signal::AdrFolder => Scope::RepositoryPaths(AuditList::AdrFolder),
+            Signal::ClaudeSetUp => Scope::RepositoryPaths(AuditList::ClaudeSetUp),
+            Signal::CiPresent => Scope::RepositoryPaths(AuditList::CiPresent),
+            Signal::LanguageSupported | Signal::Dep(_) => Scope::Repository,
+        }
+    }
+
     /// The names of the signals without a prefix, in vocabulary order.
     pub const PLAIN: [(&'static str, Signal); 7] = [
         ("machine_present", Signal::MachinePresent),
@@ -506,6 +588,7 @@ impl Manifest {
                 aliases: Vec::new(),
                 hint: None,
                 published: None,
+                experimental: None,
             },
             tool: None,
             repo_file: Vec::new(),
@@ -555,6 +638,11 @@ impl Manifest {
         self.extension.published.unwrap_or(true)
     }
 
+    /// Is the part an experiment, opt-in everywhere?
+    pub fn is_experimental(&self) -> bool {
+        self.extension.experimental.unwrap_or(false)
+    }
+
     pub fn bin(&self) -> Option<&str> {
         self.tool.as_ref()?.bin.as_deref()
     }
@@ -602,20 +690,20 @@ impl Manifest {
         !self.recommend.is_empty() || !self.conflict.is_empty()
     }
 
+    /// Does the manifest use a key that v3 did not have?
+    fn uses_v4(&self) -> bool {
+        self.extension.experimental.is_some()
+    }
+
     fn check_rules(&self) -> Result<(), Exit> {
         let status_at = |level: Option<&ToolLevel>| level.is_some_and(|l| l.status.is_some());
         for rule in &self.recommend {
             check_template(&rule.reason, &[]).map_err(bad)?;
             for c in &rule.when {
-                let (needed, label) = match c.signal {
-                    Signal::MachinePresent => (status_at(self.machine()), "machine"),
-                    Signal::RepoPresent => (status_at(self.repo_level()), "repo_level"),
-                    Signal::AdrFolder
-                    | Signal::ClaudeSetUp
-                    | Signal::CiPresent
-                    | Signal::LanguageSupported
-                    | Signal::RepoFileHere
-                    | Signal::Dep(_) => continue,
+                let (needed, label) = match c.signal.scope() {
+                    Scope::PartStatus(Level::Machine) => (status_at(self.machine()), "machine"),
+                    Scope::PartStatus(Level::Repo) => (status_at(self.repo_level()), "repo_level"),
+                    Scope::PartFile | Scope::RepositoryPaths(_) | Scope::Repository => continue,
                 };
                 if !needed {
                     return Err(bad(format!(
@@ -684,6 +772,18 @@ impl Manifest {
             if satisfies(req, V2_HARNESS_VERSION)? {
                 return Err(bad(format!(
                     "harness {req} is satisfied by 0.2, which does not know [[recommend]] and [[conflict]]; declare harness = \">=0.3\""
+                )));
+            }
+        }
+        if self.uses_v4() {
+            let Some(req) = &self.extension.harness else {
+                return Err(bad(
+                    "this manifest uses experimental, so it must declare harness = \">=0.4\"",
+                ));
+            };
+            if satisfies(req, V3_HARNESS_VERSION)? {
+                return Err(bad(format!(
+                    "harness {req} is satisfied by 0.3, which does not know experimental; declare harness = \">=0.4\""
                 )));
             }
         }
@@ -904,10 +1004,23 @@ mod tests {
         assert!(!satisfies("^0.1", now).unwrap());
         assert!(!satisfies("0.1", now).unwrap());
         assert!(!satisfies("^0.2", now).unwrap());
-        assert!(satisfies("^0.3", now).unwrap());
+        assert!(!satisfies("^0.3", now).unwrap());
+        assert!(satisfies("^0.4", now).unwrap());
         assert!(satisfies(">=0.1, <1", now).unwrap());
         assert!(!satisfies(">=9", now).unwrap());
         assert!(satisfies("nope", now).is_err());
+    }
+
+    #[test]
+    fn experimental_needs_harness_0_4() {
+        let manifest = |harness: &str| {
+            format!(
+                "[extension]\nname = \"x\"\nversion = \"1\"\nharness = \"{harness}\"\nexperimental = true\n"
+            )
+        };
+        assert!(Manifest::parse(&manifest(">=0.3")).is_err());
+        let loaded = Manifest::parse(&manifest(">=0.4")).unwrap();
+        assert!(loaded.is_experimental());
     }
 
     #[test]

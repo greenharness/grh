@@ -103,3 +103,7 @@ In `grh audit --json`, `signals` holds the repository facts only
 (`adr_folder`, `claude_set_up`, `ci_present`, `language_supported` and each
 `dep:<prefix>` a rule names). `machine_present`, `repo_present` and
 `repo_file_here` belong to one part and are read in that part's row.
+
+## v4 (harness 0.4)
+
+- `[extension]` `experimental` (default false): the part is an experiment, opt-in everywhere. `grh install --all` and the `install` line of `grh audit` leave it out (audit still gives its row a verdict, names the part in the `experimental` list of `--json`, and says how to try it when it would recommend it); it installs by name. A part that is not experimental may not `needs` an experimental one. Requires `harness = ">=0.4"` (a requirement that 0.3 satisfies is refused).

@@ -3,7 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
+use crate::audit;
 use crate::catalog::{Catalog, Part, Unknown, Verb};
+use crate::checklist;
 use crate::dispatch;
 use crate::exit::Exit;
 use crate::fetch::{install_binary, sha256_hex};
@@ -14,11 +16,11 @@ use crate::ops::{
 };
 use crate::owner::{self, Answer};
 use crate::receipt::{
-    write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
+    self, write_atomic, Entry, Kind, Level, RecordedKeepBinary, RecordedStatus, State, Store,
 };
 use crate::skills::{self, Bundle};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Opts {
     pub names: Vec<String>,
     pub all: bool,
@@ -179,22 +181,87 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     }
 }
 
+/// The `grh install …` line that stands for `opts`: parts, `--all`, `--repo`,
+/// `--replace`, `--dry-run`, `--quiet`, then `--yes` when `opts.yes` is set.
+/// Each word is shell-quoted.
+fn install_command(opts: &Opts) -> String {
+    let mut argv: Vec<String> = vec!["grh".into(), "install".into()];
+    argv.extend(opts.names.iter().cloned());
+    let flags = [
+        (opts.all, "--all"),
+        (opts.repo, "--repo"),
+        (opts.replace, "--replace"),
+        (opts.dry_run, "--dry-run"),
+        (opts.quiet, "--quiet"),
+        (opts.yes, "--yes"),
+    ];
+    argv.extend(
+        flags
+            .into_iter()
+            .filter(|(given, _)| *given)
+            .map(|(_, flag)| flag.to_string()),
+    );
+    command_line(&argv)
+}
+
+/// A bare `grh install` on a terminal: the checklist, then the install it
+/// stands for, run as if typed.
+fn choose_and_run(cat: &Catalog, opts: &Opts, ui: &Ui) -> Result<(), Exit> {
+    let assessment = audit::assess(cat, None)?;
+    if let Some(found) = &assessment {
+        audit::print_warnings(&found.warnings);
+    }
+    let mut receipt = receipt::read_in(&receipt::state_dir()?)?;
+    receipt.rename_parts(|name| cat.name_of_alias(name));
+    let installed: Vec<String> = receipt.entries.iter().map(|e| e.part.clone()).collect();
+    let model = checklist::Checklist::new(cat, assessment.as_ref(), &installed);
+    match checklist::open(model)? {
+        checklist::Opened::Unavailable(error) => Err(unavailable(&error, cat)),
+        checklist::Opened::TooSmall => Err(Exit::Usage(format!(
+            "{}\n{}",
+            checklist::TOO_SMALL,
+            listing(cat)
+        ))),
+        checklist::Opened::Cancelled => {
+            ui.say("nothing changed");
+            Ok(())
+        }
+        checklist::Opened::Confirmed { parts, repo } => {
+            let chosen = Opts {
+                names: parts,
+                all: false,
+                repo,
+                replace: opts.replace,
+                dry_run: opts.dry_run,
+                yes: false,
+                quiet: opts.quiet,
+            };
+            eprintln!("{}", install_command(&chosen));
+            run(cat, &chosen)
+        }
+    }
+}
+
 pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     if let Some(notice) = cat.retired_notice(&opts.names, Verb::Install) {
         return Err(Exit::Usage(notice));
     }
     if opts.all && !opts.names.is_empty() {
         return Err(Exit::Usage(
-            "--all installs every published part; name no parts with it".into(),
+            "--all installs every published part but the experiments;\nname no parts with it"
+                .into(),
         ));
     }
     let ui = Ui::new(opts.quiet);
     if opts.names.is_empty() && !opts.all {
+        if !opts.yes && checklist::terminal_available() {
+            return choose_and_run(cat, opts, &ui);
+        }
         return Err(Exit::Usage(listing(cat)));
     }
     cat.warn_aliases(&ui, &opts.names, Verb::Install);
     let wanted = if opts.all {
-        cat.published_names()
+        cat.all_names()
     } else {
         opts.names.clone()
     };
@@ -203,20 +270,24 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         .map_err(|Unknown::Name(n)| Exit::Usage(format!("unknown part: {n}\n{}", listing(cat))))?;
     let repo = if opts.repo { Some(git_root()?) } else { None };
     plan(&ui, &parts, repo.as_deref());
+    let left_out = cat.experimental_names();
+    if opts.all && !left_out.is_empty() {
+        ui.say(&format!(
+            "left out: {} (an experiment: install it by name)",
+            left_out.join(", ")
+        ));
+    }
     if opts.dry_run {
         ui.say("dry run: nothing changed");
         return Ok(());
     }
     // What to type again: with `--all` the whole command, built from the flags
-    // actually given, so a copied hint does not drop `--repo`, `--replace` or
-    // `--quiet`.
+    // actually given, so a copied hint does not drop one of them.
     let rerun = if opts.all {
-        format!(
-            "grh install --all{}{}{} --yes",
-            if opts.repo { " --repo" } else { "" },
-            if opts.replace { " --replace" } else { "" },
-            if opts.quiet { " --quiet" } else { "" }
-        )
+        install_command(&Opts {
+            yes: true,
+            ..opts.clone()
+        })
     } else {
         "--yes".to_string()
     };
@@ -801,5 +872,52 @@ fn place_inside(repo: &Path, dir: &str, rel: &str) -> Result<PathBuf, Exit> {
         probe = probe
             .parent()
             .ok_or_else(|| refuse("no part of the path exists"))?;
+    }
+}
+
+/// The refusal when the terminal cannot host the checklist: why, then the
+/// listing, as off a terminal.
+fn unavailable(error: &std::io::Error, cat: &Catalog) -> Exit {
+    Exit::Usage(format!("checklist unavailable: {error}\n{}", listing(cat)))
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn an_unavailable_terminal_names_the_error_then_lists_the_parts() {
+        let cat = Catalog::load().unwrap();
+        let Exit::Usage(text) = unavailable(&std::io::Error::other("no cursor reply"), &cat) else {
+            panic!("an unavailable terminal is a usage refusal");
+        };
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some("checklist unavailable: no cursor reply"));
+        assert_eq!(text.split_once('\n').unwrap().1, listing(&cat));
+    }
+
+    #[test]
+    fn the_printed_command_carries_every_flag_the_install_runs_with() {
+        let chosen = Opts {
+            names: vec!["alpha".into(), "beta".into()],
+            repo: true,
+            replace: true,
+            dry_run: true,
+            quiet: true,
+            ..Opts::default()
+        };
+        assert_eq!(
+            install_command(&chosen),
+            "grh install alpha beta --repo --replace --dry-run --quiet"
+        );
+        let all = Opts {
+            all: true,
+            repo: true,
+            ..Opts::default()
+        };
+        assert_eq!(
+            install_command(&Opts { yes: true, ..all }),
+            "grh install --all --repo --yes"
+        );
     }
 }

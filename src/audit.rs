@@ -7,24 +7,30 @@
 use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, Output, Stdio};
 
 use serde_json::{json, Value};
 
 use crate::catalog::{Catalog, Part};
 use crate::exit::Exit;
 use crate::manifest::{render, ConflictWhen, Signal, ToolLevel, Verdict};
+use crate::ops::command_line;
 use crate::owner::{self, Answer};
+use crate::receipt::Level;
 
-fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
+/// Run `git -C dir args` with no input and its errors discarded.
+fn run_git(dir: &Path, args: &[&str]) -> std::io::Result<Output> {
+    Command::new("git")
         .arg("-C")
         .arg(dir)
         .args(args)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
         .output()
-        .ok()?;
+}
+
+fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = run_git(dir, args).ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
@@ -33,14 +39,8 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 /// `git config --get key`: the value, `Ok(None)` when the key is unset (git
 /// exits 1), or why git could not answer.
 fn git_config(dir: &Path, key: &str) -> Result<Option<String>, String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(["config", "--get", key])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|e| format!("cannot run git: {e}"))?;
+    let out =
+        run_git(dir, &["config", "--get", key]).map_err(|e| format!("cannot run git: {e}"))?;
     match out.status.code() {
         Some(0) => Ok(Some(
             String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
@@ -88,10 +88,31 @@ fn language(file: &str) -> &'static str {
     }
 }
 
-struct Row<'a> {
-    part: &'a str,
-    verdict: Verdict,
-    reason: String,
+/// One part's verdict and the reason it gets.
+#[derive(Debug)]
+pub struct Row<'a> {
+    pub(crate) part: &'a str,
+    pub(crate) verdict: Verdict,
+    pub(crate) reason: String,
+}
+
+/// Everything the audit found in one repository; printing it is `run`'s job.
+#[derive(Debug)]
+pub struct Assessment<'a> {
+    pub(crate) root: PathBuf,
+    pub(crate) languages: BTreeMap<&'static str, usize>,
+    pub(crate) rows: Vec<Row<'a>>,
+    pub(crate) hooks: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) adr_folder: Option<String>,
+    pub(crate) ci: Vec<String>,
+    pub(crate) signals: BTreeMap<String, bool>,
+    /// Recommended parts that are not experimental, in catalog order.
+    pub(crate) install: Vec<&'a str>,
+    /// The published experimental parts, whether recommended or not.
+    pub(crate) experimental: Vec<&'a str>,
+    /// The experimental parts the audit recommends, in catalog order.
+    pub(crate) recommended_experiments: Vec<&'a str>,
 }
 
 /// What the audit knows about the repository, before any rule reads it.
@@ -109,7 +130,7 @@ struct PartFacts {
     repo_present: bool,
     repo_file_here: bool,
     /// The levels whose status query ran but gave no answer.
-    unknown: Vec<&'static str>,
+    unknown: Vec<Level>,
 }
 
 fn dependency_names(root: &Path) -> Vec<String> {
@@ -143,6 +164,19 @@ fn level_answer(part: &Part, level: Option<&ToolLevel>, repo: Option<&Path>) -> 
     Some(owner::level_state(level, &bin, repo))
 }
 
+/// The command of a part's declared status query at `level`, as typed.
+fn status_command(part: &Part, level: Level) -> Option<String> {
+    let tool_level = match level {
+        Level::Machine => part.machine(),
+        Level::Repo => part.repo_level(),
+    }?;
+    let status = tool_level.status.as_ref()?;
+    let argv: Vec<String> = std::iter::once(part.bin()?.to_string())
+        .chain(status.args.iter().cloned())
+        .collect();
+    Some(command_line(&argv))
+}
+
 fn part_facts(part: &Part, root: &Path, ci: &[String]) -> PartFacts {
     let repo_file_here = part
         .repo_file
@@ -151,7 +185,7 @@ fn part_facts(part: &Part, root: &Path, ci: &[String]) -> PartFacts {
         .is_some_and(|name| ci.iter().any(|dir| root.join(dir).join(name).is_file()));
     let machine = level_answer(part, part.machine(), None);
     let repo = level_answer(part, part.repo_level(), Some(root));
-    let unknown = [("machine", machine), ("repo", repo)]
+    let unknown = [(Level::Machine, machine), (Level::Repo, repo)]
         .into_iter()
         .filter(|(_, a)| *a == Some(Answer::Unknown))
         .map(|(level, _)| level)
@@ -218,12 +252,16 @@ fn print_lines(lines: &[String]) -> Result<(), Exit> {
     Ok(())
 }
 
-pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
+/// Read the repository at `dir` (default `.`) and assess every part; `None`
+/// outside a git work tree. Prints nothing.
+pub fn assess<'a>(cat: &'a Catalog, dir: Option<&Path>) -> Result<Option<Assessment<'a>>, Exit> {
     let given = dir.unwrap_or_else(|| Path::new("."));
-    let root = git(given, &["rev-parse", "--show-toplevel"])
+    let Some(root) = git(given, &["rev-parse", "--show-toplevel"])
         .filter(|_| git(given, &["rev-parse", "--is-inside-work-tree"]).as_deref() == Some("true"))
         .map(PathBuf::from)
-        .ok_or_else(|| Exit::Usage(format!("{} is not a git work tree", given.display())))?;
+    else {
+        return Ok(None);
+    };
 
     // Languages: tracked and untracked-but-not-ignored files.
     let listing = git(
@@ -284,7 +322,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         .map(|(p, _)| p.name().to_string())
         .collect();
     let mut warnings: Vec<String> = Vec::new();
-    for (part, part_facts) in cat.parts.iter().zip(&per_part) {
+    for (part, facts_of_part) in cat.parts.iter().zip(&per_part) {
         for conflict in &part.conflict {
             match &conflict.when {
                 ConflictWhen::GitConfig(key) => {
@@ -293,7 +331,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
                         Ok(_) => continue,
                         Err(why) => {
                             warnings.push(format!(
-                                "{}: {why}; its conflict check did not run",
+                                "{}: {why}; its conflict check did not run; run `git config --get {key}` to see why",
                                 part.name()
                             ));
                             continue;
@@ -304,7 +342,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
                     warnings.extend(conflict.warning.iter().map(|w| fill(w, &vals)));
                 }
                 ConflictWhen::ForeignHooks => {
-                    if !part_facts.repo_present {
+                    if !facts_of_part.repo_present {
                         hooks.extend(
                             foreign_hook_names(&root)
                                 .into_iter()
@@ -330,11 +368,15 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
 
     // Status queries that ran and gave no answer: the row reads them as
     // absent, so say so.
-    for (part, part_facts) in cat.parts.iter().zip(&per_part) {
-        for level in &part_facts.unknown {
+    for (part, facts_of_part) in cat.parts.iter().zip(&per_part) {
+        for &level in &facts_of_part.unknown {
             warnings.push(format!(
-                "{}: the {level} status query gave no answer; its row reads it as not installed",
-                part.name()
+                "{}: the {} status query gave no answer; its row reads it as not installed{}",
+                part.name(),
+                level.name(),
+                status_command(part, level)
+                    .map(|command| format!("; run `{command}` to see why"))
+                    .unwrap_or_default()
             ));
         }
     }
@@ -361,11 +403,11 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         .parts
         .iter()
         .zip(&per_part)
-        .map(|(part, part_facts)| {
+        .map(|(part, facts_of_part)| {
             let rule = part.recommend.iter().find(|r| {
                 r.when
                     .iter()
-                    .all(|c| signal_holds(&c.signal, &facts, part_facts) != c.negated)
+                    .all(|c| signal_holds(&c.signal, &facts, facts_of_part) != c.negated)
             });
             match rule {
                 Some(r) => Row {
@@ -381,69 +423,95 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
             }
         })
         .collect();
-    let recommended: Vec<&str> = rows
+    let (install, recommended_experiments) = split_recommended(cat, &rows);
+
+    // Repository facts only: the per-part signals (machine_present,
+    // repo_present, repo_file_here) hold for one part and are read in
+    // that part's row, so a single flag here would mean "some part".
+    let mut signals: BTreeMap<String, bool> = BTreeMap::new();
+    let no_part = PartFacts {
+        machine_present: false,
+        repo_present: false,
+        repo_file_here: false,
+        unknown: Vec::new(),
+    };
+    for (name, signal) in Signal::PLAIN {
+        if !signal.scope().is_per_part() {
+            signals.insert(name.to_string(), signal_holds(&signal, &facts, &no_part));
+        }
+    }
+    let prefixes = cat
+        .parts
         .iter()
-        .filter(|r| r.verdict == Verdict::Recommend)
-        .map(|r| r.part)
-        .collect();
-    let install =
-        (!recommended.is_empty()).then(|| format!("grh install {}", recommended.join(" ")));
+        .flat_map(|p| &p.recommend)
+        .flat_map(|r| &r.when)
+        .filter_map(|c| match &c.signal {
+            Signal::Dep(prefix) => Some(prefix),
+            Signal::MachinePresent
+            | Signal::RepoPresent
+            | Signal::AdrFolder
+            | Signal::ClaudeSetUp
+            | Signal::CiPresent
+            | Signal::LanguageSupported
+            | Signal::RepoFileHere => None,
+        });
+    for prefix in prefixes {
+        let holds = facts.dependencies.iter().any(|d| d.starts_with(prefix));
+        signals.insert(format!("dep:{prefix}"), holds);
+    }
+
+    Ok(Some(Assessment {
+        root,
+        languages,
+        rows,
+        hooks,
+        warnings,
+        adr_folder: facts.adr_folder,
+        ci: facts.ci,
+        signals,
+        install,
+        experimental: cat.experimental_names(),
+        recommended_experiments,
+    }))
+}
+
+pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> Result<(), Exit> {
+    let Some(assessment) = assess(cat, dir)? else {
+        let given = dir.unwrap_or_else(|| Path::new("."));
+        return Err(Exit::Usage(format!(
+            "{} is not a git work tree",
+            given.display()
+        )));
+    };
+    let Assessment {
+        root,
+        languages,
+        rows,
+        hooks,
+        warnings,
+        adr_folder,
+        ci,
+        signals,
+        install,
+        experimental,
+        recommended_experiments,
+    } = assessment;
+    let install = (!install.is_empty()).then(|| format!("grh install {}", install.join(" ")));
 
     if format == crate::status::Format::Json {
-        // Repository facts only: the per-part signals (machine_present,
-        // repo_present, repo_file_here) hold for one part and are read in
-        // that part's row, so a single flag here would mean "some part".
-        let mut signals: BTreeMap<String, bool> = BTreeMap::new();
-        let no_part = PartFacts {
-            machine_present: false,
-            repo_present: false,
-            repo_file_here: false,
-            unknown: Vec::new(),
-        };
-        for (name, signal) in Signal::PLAIN {
-            let repository_level = match signal {
-                Signal::MachinePresent | Signal::RepoPresent | Signal::RepoFileHere => false,
-                Signal::AdrFolder
-                | Signal::ClaudeSetUp
-                | Signal::CiPresent
-                | Signal::LanguageSupported
-                | Signal::Dep(_) => true,
-            };
-            if repository_level {
-                signals.insert(name.to_string(), signal_holds(&signal, &facts, &no_part));
-            }
-        }
-        let prefixes = cat
-            .parts
-            .iter()
-            .flat_map(|p| &p.recommend)
-            .flat_map(|r| &r.when)
-            .filter_map(|c| match &c.signal {
-                Signal::Dep(prefix) => Some(prefix),
-                Signal::MachinePresent
-                | Signal::RepoPresent
-                | Signal::AdrFolder
-                | Signal::ClaudeSetUp
-                | Signal::CiPresent
-                | Signal::LanguageSupported
-                | Signal::RepoFileHere => None,
-            });
-        for prefix in prefixes {
-            let holds = facts.dependencies.iter().any(|d| d.starts_with(prefix));
-            signals.insert(format!("dep:{prefix}"), holds);
-        }
         let doc = json!({
             "schema": 2,
             "dir": root.to_string_lossy(),
             "languages": languages,
             "hooks": hooks,
-            "adr_folder": facts.adr_folder,
-            "ci": facts.ci,
+            "adr_folder": adr_folder,
+            "ci": ci,
             "signals": signals,
             "parts": rows.iter().map(|r| json!({
                 "part": r.part, "verdict": r.verdict.as_str(), "reason": r.reason
             })).collect::<Vec<_>>(),
             "install": install,
+            "experimental": experimental,
             "warnings": warnings,
         });
         let text = serde_json::to_string_pretty(&doc)
@@ -461,14 +529,112 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         })
         .collect();
     lines.push(install.unwrap_or_else(|| "nothing to install".to_string()));
+    for name in recommended_experiments {
+        lines.push(format!(
+            "{name} is an experiment: grh install {name} to try it"
+        ));
+    }
     let printed = print_lines(&lines);
-    // A closed stderr is no reason to fail or panic: the rows are written.
+    print_warnings(&warnings);
+    printed
+}
+
+/// Each warning as `warning: …` on stderr. A closed stderr is no reason to
+/// fail or panic: whatever was to be shown has been written.
+pub(crate) fn print_warnings(warnings: &[String]) {
     let stderr = std::io::stderr();
     let mut err = stderr.lock();
-    for w in &warnings {
+    for w in warnings {
         if writeln!(err, "warning: {w}").is_err() {
             break;
         }
     }
-    printed
+}
+
+/// The recommended parts, split in row order into those an install takes and
+/// the experiments, which are only ever installed by name.
+fn split_recommended<'a>(cat: &Catalog, rows: &[Row<'a>]) -> (Vec<&'a str>, Vec<&'a str>) {
+    rows.iter()
+        .filter(|r| r.verdict == Verdict::Recommend)
+        .map(|r| r.part)
+        .partition(|name| !cat.part(name).is_some_and(|p| p.is_experimental()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn catalog() -> Catalog {
+        Catalog::load().expect("the embedded catalog loads")
+    }
+
+    fn git_ok(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .status()
+            .expect("git runs");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    #[test]
+    fn assess_reads_a_git_repository_without_printing() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        git_ok(dir.path(), &["init", "-q"]);
+        std::fs::write(dir.path().join("main.rs"), "fn main() {}\n").expect("write");
+        let cat = catalog();
+        let assessment = assess(&cat, Some(dir.path()))
+            .expect("no failure")
+            .expect("inside a work tree");
+        assert_eq!(assessment.rows.len(), cat.parts.len());
+        assert_eq!(assessment.languages.get("rust"), Some(&1));
+        let recommended: Vec<&str> = assessment
+            .rows
+            .iter()
+            .filter(|r| {
+                r.verdict == Verdict::Recommend
+                    && !cat.part(r.part).is_some_and(|p| p.is_experimental())
+            })
+            .map(|r| r.part)
+            .collect();
+        assert_eq!(assessment.install, recommended);
+    }
+
+    #[test]
+    fn a_recommended_experiment_is_listed_apart_and_never_in_install() {
+        // Rows built by hand: what `assess` recommends depends on what the
+        // machine has installed, and this test is about the split alone.
+        let cat = catalog();
+        let experiment = cat.experimental_names()[0];
+        let stable = cat
+            .parts
+            .iter()
+            .find(|p| p.is_published() && !p.is_experimental())
+            .expect("a published stable part")
+            .name();
+        let row = |part, verdict| Row {
+            part,
+            verdict,
+            reason: String::new(),
+        };
+        let rows = [
+            row(experiment, Verdict::Recommend),
+            row(stable, Verdict::Recommend),
+            row(stable, Verdict::NotUseful),
+        ];
+        let (install, recommended_experiments) = split_recommended(&cat, &rows);
+        assert_eq!(install, vec![stable]);
+        assert_eq!(recommended_experiments, vec![experiment]);
+    }
+
+    #[test]
+    fn assess_outside_a_work_tree_is_none() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let cat = catalog();
+        assert!(assess(&cat, Some(dir.path()))
+            .expect("no failure")
+            .is_none());
+    }
 }
