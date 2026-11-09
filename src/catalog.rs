@@ -377,11 +377,11 @@ impl Catalog {
     }
 
     /// The published experimental parts, by name, in catalog order.
-    pub fn experimental_names(&self) -> Vec<String> {
+    pub fn experimental_names(&self) -> Vec<&str> {
         self.parts
             .iter()
             .filter(|p| p.is_published() && p.is_experimental())
-            .map(|p| p.name().to_string())
+            .map(|p| p.name())
             .collect()
     }
 

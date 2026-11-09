@@ -91,26 +91,28 @@ fn language(file: &str) -> &'static str {
 /// One part's verdict and the reason it gets.
 #[derive(Debug)]
 pub struct Row<'a> {
-    pub part: &'a str,
-    pub verdict: Verdict,
-    pub reason: String,
+    pub(crate) part: &'a str,
+    pub(crate) verdict: Verdict,
+    pub(crate) reason: String,
 }
 
 /// Everything the audit found in one repository; printing it is `run`'s job.
 #[derive(Debug)]
 pub struct Assessment<'a> {
-    pub root: PathBuf,
-    pub languages: BTreeMap<&'static str, usize>,
-    pub rows: Vec<Row<'a>>,
-    pub hooks: Vec<String>,
-    pub warnings: Vec<String>,
-    pub adr_folder: Option<String>,
-    pub ci: Vec<String>,
-    pub signals: BTreeMap<String, bool>,
+    pub(crate) root: PathBuf,
+    pub(crate) languages: BTreeMap<&'static str, usize>,
+    pub(crate) rows: Vec<Row<'a>>,
+    pub(crate) hooks: Vec<String>,
+    pub(crate) warnings: Vec<String>,
+    pub(crate) adr_folder: Option<String>,
+    pub(crate) ci: Vec<String>,
+    pub(crate) signals: BTreeMap<String, bool>,
     /// Recommended parts that are not experimental, in catalog order.
-    pub install: Vec<&'a str>,
+    pub(crate) install: Vec<&'a str>,
     /// The published experimental parts, whether recommended or not.
-    pub experimental: Vec<String>,
+    pub(crate) experimental: Vec<&'a str>,
+    /// The experimental parts the audit recommends, in catalog order.
+    pub(crate) recommended_experiments: Vec<&'a str>,
 }
 
 /// What the audit knows about the repository, before any rule reads it.
@@ -421,12 +423,7 @@ pub fn assess<'a>(cat: &'a Catalog, dir: Option<&Path>) -> Result<Option<Assessm
             }
         })
         .collect();
-    let is_experiment = |name: &str| cat.part(name).is_some_and(|p| p.is_experimental());
-    let install: Vec<&str> = rows
-        .iter()
-        .filter(|r| r.verdict == Verdict::Recommend && !is_experiment(r.part))
-        .map(|r| r.part)
-        .collect();
+    let (install, recommended_experiments) = split_recommended(cat, &rows);
 
     // Repository facts only: the per-part signals (machine_present,
     // repo_present, repo_file_here) hold for one part and are read in
@@ -474,6 +471,7 @@ pub fn assess<'a>(cat: &'a Catalog, dir: Option<&Path>) -> Result<Option<Assessm
         signals,
         install,
         experimental: cat.experimental_names(),
+        recommended_experiments,
     }))
 }
 
@@ -496,6 +494,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         signals,
         install,
         experimental,
+        recommended_experiments,
     } = assessment;
     let install = (!install.is_empty()).then(|| format!("grh install {}", install.join(" ")));
 
@@ -520,9 +519,6 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         return print_lines(&[text]);
     }
 
-    let recommended_experiments = rows.iter().filter(|r| {
-        r.verdict == Verdict::Recommend && cat.part(r.part).is_some_and(|p| p.is_experimental())
-    });
     let width = rows.iter().map(|r| r.part.len()).max().unwrap_or(0);
     let mut lines: Vec<String> = rows
         .iter()
@@ -533,7 +529,7 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         })
         .collect();
     lines.push(install.unwrap_or_else(|| "nothing to install".to_string()));
-    for Row { part: name, .. } in recommended_experiments {
+    for name in recommended_experiments {
         lines.push(format!(
             "{name} is an experiment: grh install {name} to try it"
         ));
@@ -548,6 +544,15 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         }
     }
     printed
+}
+
+/// The recommended parts, split in row order into those an install takes and
+/// the experiments, which are only ever installed by name.
+fn split_recommended<'a>(cat: &Catalog, rows: &[Row<'a>]) -> (Vec<&'a str>, Vec<&'a str>) {
+    rows.iter()
+        .filter(|r| r.verdict == Verdict::Recommend)
+        .map(|r| r.part)
+        .partition(|name| !cat.part(name).is_some_and(|p| p.is_experimental()))
 }
 
 #[cfg(test)]
@@ -590,6 +595,33 @@ mod tests {
             .map(|r| r.part)
             .collect();
         assert_eq!(assessment.install, recommended);
+    }
+
+    #[test]
+    fn a_recommended_experiment_is_listed_apart_and_never_in_install() {
+        // Rows built by hand: what `assess` recommends depends on what the
+        // machine has installed, and this test is about the split alone.
+        let cat = catalog();
+        let experiment = cat.experimental_names()[0];
+        let stable = cat
+            .parts
+            .iter()
+            .find(|p| p.is_published() && !p.is_experimental())
+            .expect("a published stable part")
+            .name();
+        let row = |part, verdict| Row {
+            part,
+            verdict,
+            reason: String::new(),
+        };
+        let rows = [
+            row(experiment, Verdict::Recommend),
+            row(stable, Verdict::Recommend),
+            row(stable, Verdict::NotUseful),
+        ];
+        let (install, recommended_experiments) = split_recommended(&cat, &rows);
+        assert_eq!(install, vec![stable]);
+        assert_eq!(recommended_experiments, vec![experiment]);
     }
 
     #[test]

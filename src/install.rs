@@ -20,7 +20,7 @@ use crate::receipt::{
 };
 use crate::skills::{self, Bundle};
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Opts {
     pub names: Vec<String>,
     pub all: bool,
@@ -181,16 +181,47 @@ fn plan(ui: &Ui, parts: &[&Part], repo: Option<&Path>) {
     }
 }
 
+/// The `grh install …` line that stands for `opts`: parts, `--all`, `--repo`,
+/// `--replace`, `--dry-run`, `--quiet`, then `--yes` when `opts.yes` is set.
+/// Each word is shell-quoted.
+fn install_command(opts: &Opts) -> String {
+    let mut argv: Vec<String> = vec!["grh".into(), "install".into()];
+    argv.extend(opts.names.iter().cloned());
+    let flags = [
+        (opts.all, "--all"),
+        (opts.repo, "--repo"),
+        (opts.replace, "--replace"),
+        (opts.dry_run, "--dry-run"),
+        (opts.quiet, "--quiet"),
+        (opts.yes, "--yes"),
+    ];
+    argv.extend(
+        flags
+            .into_iter()
+            .filter(|(given, _)| *given)
+            .map(|(_, flag)| flag.to_string()),
+    );
+    command_line(&argv)
+}
+
 /// A bare `grh install` on a terminal: the checklist, then the install it
 /// stands for, run as if typed.
 fn choose_and_run(cat: &Catalog, opts: &Opts, ui: &Ui) -> Result<(), Exit> {
     let assessment = audit::assess(cat, None)?;
+    if let Some(found) = &assessment {
+        for warning in &found.warnings {
+            eprintln!("warning: {warning}");
+        }
+    }
     let mut receipt = receipt::read_in(&receipt::state_dir()?)?;
     receipt.rename_parts(|name| cat.name_of_alias(name));
     let installed: Vec<String> = receipt.entries.iter().map(|e| e.part.clone()).collect();
     let model = checklist::Checklist::new(cat, assessment.as_ref(), &installed);
     match checklist::open(model)? {
-        checklist::Opened::Unavailable => Err(Exit::Usage(listing(cat))),
+        checklist::Opened::Unavailable(error) => Err(Exit::Usage(format!(
+            "checklist unavailable: {error}\n{}",
+            listing(cat)
+        ))),
         checklist::Opened::TooSmall => Err(Exit::Usage(format!(
             "{}\n{}",
             checklist::TOO_SMALL,
@@ -201,23 +232,17 @@ fn choose_and_run(cat: &Catalog, opts: &Opts, ui: &Ui) -> Result<(), Exit> {
             Ok(())
         }
         checklist::Opened::Confirmed { parts, repo } => {
-            eprintln!(
-                "grh install {}{}",
-                parts.join(" "),
-                if repo { " --repo" } else { "" }
-            );
-            run(
-                cat,
-                &Opts {
-                    names: parts,
-                    all: false,
-                    repo,
-                    replace: opts.replace,
-                    dry_run: opts.dry_run,
-                    yes: false,
-                    quiet: opts.quiet,
-                },
-            )
+            let chosen = Opts {
+                names: parts,
+                all: false,
+                repo,
+                replace: opts.replace,
+                dry_run: opts.dry_run,
+                yes: false,
+                quiet: opts.quiet,
+            };
+            eprintln!("{}", install_command(&chosen));
+            run(cat, &chosen)
         }
     }
 }
@@ -262,15 +287,12 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
     // What to type again: with `--all` the whole command, built from the flags
-    // actually given, so a copied hint does not drop `--repo`, `--replace` or
-    // `--quiet`.
+    // actually given, so a copied hint does not drop one of them.
     let rerun = if opts.all {
-        format!(
-            "grh install --all{}{}{} --yes",
-            if opts.repo { " --repo" } else { "" },
-            if opts.replace { " --replace" } else { "" },
-            if opts.quiet { " --quiet" } else { "" }
-        )
+        install_command(&Opts {
+            yes: true,
+            ..opts.clone()
+        })
     } else {
         "--yes".to_string()
     };
@@ -855,5 +877,35 @@ fn place_inside(repo: &Path, dir: &str, rel: &str) -> Result<PathBuf, Exit> {
         probe = probe
             .parent()
             .ok_or_else(|| refuse("no part of the path exists"))?;
+    }
+}
+
+#[cfg(test)]
+mod command_tests {
+    use super::*;
+
+    #[test]
+    fn the_printed_command_carries_every_flag_the_install_runs_with() {
+        let chosen = Opts {
+            names: vec!["alpha".into(), "beta".into()],
+            repo: true,
+            replace: true,
+            dry_run: true,
+            quiet: true,
+            ..Opts::default()
+        };
+        assert_eq!(
+            install_command(&chosen),
+            "grh install alpha beta --repo --replace --dry-run --quiet"
+        );
+        let all = Opts {
+            all: true,
+            repo: true,
+            ..Opts::default()
+        };
+        assert_eq!(
+            install_command(&Opts { yes: true, ..all }),
+            "grh install --all --repo --yes"
+        );
     }
 }

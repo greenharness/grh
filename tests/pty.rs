@@ -49,19 +49,22 @@ experimental = true
 "#;
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    _scratch: tempfile::TempDir,
     root: PathBuf,
 }
 
 impl Fixture {
     fn new() -> Fixture {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
+        let scratch = tempfile::tempdir().unwrap();
+        let root = scratch.path().canonicalize().unwrap();
         for dir in ["home", "state", "work"] {
             fs::create_dir_all(root.join(dir)).unwrap();
         }
         fs::write(root.join("catalog.toml"), CATALOG).unwrap();
-        Fixture { _tmp: tmp, root }
+        Fixture {
+            _scratch: scratch,
+            root,
+        }
     }
 
     fn assert_no_receipt(&self) {
@@ -178,9 +181,16 @@ fn grh_pid(shell: &str) -> String {
     }
 }
 
-fn terminate(pid: &str) {
-    let status = Command::new("kill").args(["-TERM", pid]).status().unwrap();
+fn send_signal(name: &str, pid: &str) {
+    let status = Command::new("kill")
+        .args([&format!("-{name}"), pid])
+        .status()
+        .unwrap();
     assert!(status.success());
+}
+
+fn terminate(pid: &str) {
+    send_signal("TERM", pid);
 }
 
 #[test]
@@ -204,6 +214,9 @@ fn two_enters_in_one_write_leave_proceed_waiting() {
     let (mut session, _) = fixture.open();
     send(&mut session, " \r\r");
     expect(&mut session, "Proceed? [y/N]");
+    // A real pty has no controlled clock: this wait only gives a wrongly
+    // accepted second enter time to show. The positive `n` -> `nothing changed`
+    // follow-up below proves Proceed? still waited.
     sleep(Duration::from_millis(500));
     let mut seen = String::new();
     while let Some(character) = session.try_read() {
@@ -239,6 +252,15 @@ fn ctrl_c_exits_130() {
 }
 
 #[test]
+fn sigint_as_a_signal_in_the_checklist_exits_130_and_restores_the_terminal() {
+    let fixture = Fixture::new();
+    let (mut session, shell) = fixture.open();
+    send_signal("INT", &grh_pid(&shell));
+    finish(&mut session, 130);
+    fixture.assert_no_receipt();
+}
+
+#[test]
 fn sigterm_in_the_checklist_exits_143() {
     let fixture = Fixture::new();
     let (mut session, shell) = fixture.open();
@@ -262,8 +284,11 @@ fn sigterm_at_proceed_exits_143() {
 fn a_6_row_terminal_gets_the_notice_and_the_listing() {
     let fixture = Fixture::new();
     let mut session = fixture.spawn(6, 80);
-    let notice = "terminal too small for the checklist (needs 8 rows, 40 columns): enlarge it or name the parts";
-    expect(&mut session, notice);
+    expect(
+        &mut session,
+        "terminal too small for the checklist (needs 8 rows, 40 columns):",
+    );
+    expect(&mut session, "enlarge it, or run grh install <part>");
     expect(&mut session, "name the parts to install");
     finish(&mut session, 2);
     fixture.assert_no_receipt();
