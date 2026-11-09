@@ -1,8 +1,9 @@
 # The parts grh knows, compiled into the binary (ADR-0050, ADR-0064).
 #
-# Each [[part]] is a greenharness.toml v2 manifest (docs/extension-manifest.md):
-# its binary and the release it pins (version and the sha256 of each target's
-# tarball, copied from that release's SHA256SUMS by `scripts/pin.sh`), the
+# Each [[part]] is a greenharness.toml v2 manifest (docs/extension-manifest.md)
+# held here for a part whose repository ships none yet: its binary and the
+# release it pins (version and the sha256 of each target's tarball, copied
+# from that release's SHA256SUMS), the
 # tool's own commands that place and remove its integration, and the status
 # query that says whether it is there. grh never writes a tool's config
 # itself: it runs these commands.
@@ -10,6 +11,13 @@
 # `{bin}` is the absolute path of the part's binary. A status query's `args`
 # run that binary; its answer is an exit-code pair or a state word at a JSON
 # path: present / absent / partial, anything else is unknown.
+#
+# A part whose repository ships its own manifest is a [[pinned]] entry
+# instead (name, repo, tag, asset, sha256): its copy lives in manifests/ and is
+# built into grh, checked against the pin at load. `cargo run --example pins --
+# pin <name> <repo> <tag>` fetches a copy and prints the entry; `make
+# pins-check` re-downloads every pin (docs/extension-manifest.md, "Shipping a
+# manifest").
 #
 # `order` is ADR-0064's list of the parts, in catalog names. Every `needs` and
 # `enhances` edge points to an earlier entry; Catalog::checked refuses the rest.

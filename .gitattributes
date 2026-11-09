@@ -1,0 +1,2 @@
+manifests/*.toml -text
+tests/fixtures/pinned/manifests/*.toml -text

@@ -1,0 +1,13 @@
+skills_repo = "greenharness/skills"
+skills_version = "0.1.0"
+skills_sha256 = "x"
+foreign_markers = ["relais:begin"]
+order = ["pinned-demo"]
+
+[retired_names]
+
+[[pinned]]
+name = "pinned-demo"
+repo = "fixture/pinned-demo"
+tag = "v1.0.0"
+sha256 = "04c7616cdfb69b8c37be778533689ef0e212d3fe4ab5795b9bc0282fb5ca7a8f"

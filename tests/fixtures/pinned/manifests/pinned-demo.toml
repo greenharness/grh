@@ -1,0 +1,10 @@
+[extension]
+name = "pinned-demo"
+version = "1.0.0"
+harness = ">=0.2"
+summary = "a part whose manifest is a pinned copy"
+
+[[repo_file]]
+dirs = [".github"]
+path = "workflows/pinned-demo.yml"
+content = "name: pinned-demo\n"

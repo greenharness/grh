@@ -5,6 +5,20 @@ section is missing here.
 
 ## Unreleased
 
+### Added
+
+- **Pinned manifests.** A part whose repository ships its own
+  `greenharness.toml` can be a `[[pinned]]` entry in the catalog (repo, tag,
+  sha256); its copy is built into grh and checked at load, with no network.
+  No part is pinned yet, so grh behaves as 0.4.0. Maintainers pin a release
+  with `cargo run --example pins -- pin`, and CI re-checks every pin.
+
+### Changed
+
+- **`Catalog` no longer implements `Deserialize`.** Build a catalog with
+  `Catalog::parse` or `Catalog::parse_with`, which resolve pins and run the
+  catalog's checks.
+
 ## v0.4.0
 
 ### Added

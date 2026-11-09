@@ -3,10 +3,14 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
   rust:
+    if: github.event_name != 'schedule'
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -20,6 +24,7 @@ jobs:
       - run: cargo test
 
   deny:
+    if: github.event_name != 'schedule'
     # cargo-deny is fetched through the API asset endpoint (`gh release
     # download`), not the web download route: the action's `curl --silent`
     # of that route got 504 pages for hours on 2026-11-08 and fed them to
@@ -49,7 +54,35 @@ jobs:
           install -m 0755 "$RUNNER_TEMP/$name/cargo-deny" "$HOME/.cargo/bin/cargo-deny"
       - run: cargo deny --log-level warn --manifest-path ./Cargo.toml --all-features check
 
+  # Every pinned manifest, downloaded again and compared with its pin and its
+  # copy. Exit codes are the example's own: 1 mismatch, missing asset or
+  # refusal, 2 usage, 3 host unreachable. On a pull request an outage (3) is a
+  # warning; a nightly or manual run fails on it too.
+  pinned-manifests:
+    name: pinned manifests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: check pins
+        shell: bash
+        run: |
+          set +e
+          # the command `make pins-check` runs, called directly: make would
+          # turn every failing exit into 2 and hide 3 (an outage)
+          cargo run --locked --example pins -- check
+          code=$?
+          set -e
+          if [ "$code" = 3 ] && [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            echo "::warning::a pinned manifest's host was unreachable; not a failure on a pull request"
+            exit 0
+          fi
+          exit "$code"
+
   msrv:
+    if: github.event_name != 'schedule'
     # A `rust-version` nobody compiles against is a comment with syntax.
     runs-on: ubuntu-latest
     steps:
@@ -63,6 +96,7 @@ jobs:
   # release into a fixture repository, then a bare uninstall that must leave
   # the scratch HOME as it found it.
   e2e:
+    if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
