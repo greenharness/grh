@@ -13,7 +13,7 @@ use serde_json::{json, Value};
 
 use crate::catalog::{Catalog, Part};
 use crate::exit::Exit;
-use crate::manifest::{render, Signal, ToolLevel, Verdict};
+use crate::manifest::{render, ConflictWhen, Signal, ToolLevel, Verdict};
 use crate::owner::{self, Answer};
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
@@ -28,6 +28,29 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+}
+
+/// `git config --get key`: the value, `Ok(None)` when the key is unset (git
+/// exits 1), or why git could not answer.
+fn git_config(dir: &Path, key: &str) -> Result<Option<String>, String> {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["config", "--get", key])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("cannot run git: {e}"))?;
+    match out.status.code() {
+        Some(0) => Ok(Some(
+            String::from_utf8_lossy(&out.stdout).trim_end().to_string(),
+        )),
+        Some(1) => Ok(None),
+        other => Err(format!(
+            "git config --get {key} failed ({})",
+            other.map_or("killed".to_string(), |c| format!("exit {c}"))
+        )),
+    }
 }
 
 /// Every executable called `name` on PATH, distinct files only.
@@ -85,6 +108,8 @@ struct PartFacts {
     machine_present: bool,
     repo_present: bool,
     repo_file_here: bool,
+    /// The levels whose status query ran but gave no answer.
+    unknown: Vec<&'static str>,
 }
 
 fn dependency_names(root: &Path) -> Vec<String> {
@@ -110,15 +135,12 @@ fn existing(root: &Path, paths: &[String]) -> Vec<String> {
 }
 
 /// The answer of a part's declared status query at one level, run on the
-/// first candidate binary found; unknown when the level, its query or the
-/// binary is missing.
-fn level_answer(part: &Part, level: Option<&ToolLevel>, repo: Option<&Path>) -> Answer {
-    let (Some(level), Some(bin)) = (level, part.bin()) else {
-        return Answer::Unknown;
-    };
-    candidates(bin)
-        .first()
-        .map_or(Answer::Unknown, |b| owner::level_state(level, b, repo))
+/// first candidate binary found; `None` when the level, its query or the
+/// binary is missing, so nothing was asked.
+fn level_answer(part: &Part, level: Option<&ToolLevel>, repo: Option<&Path>) -> Option<Answer> {
+    let level = level.filter(|l| l.status.is_some())?;
+    let bin = candidates(part.bin()?).into_iter().next()?;
+    Some(owner::level_state(level, &bin, repo))
 }
 
 fn part_facts(part: &Part, root: &Path, ci: &[String]) -> PartFacts {
@@ -127,10 +149,18 @@ fn part_facts(part: &Part, root: &Path, ci: &[String]) -> PartFacts {
         .first()
         .and_then(|f| Path::new(&f.path).file_name())
         .is_some_and(|name| ci.iter().any(|dir| root.join(dir).join(name).is_file()));
+    let machine = level_answer(part, part.machine(), None);
+    let repo = level_answer(part, part.repo_level(), Some(root));
+    let unknown = [("machine", machine), ("repo", repo)]
+        .into_iter()
+        .filter(|(_, a)| *a == Some(Answer::Unknown))
+        .map(|(level, _)| level)
+        .collect();
     PartFacts {
-        machine_present: level_answer(part, part.machine(), None) == Answer::Present,
-        repo_present: level_answer(part, part.repo_level(), Some(root)) == Answer::Present,
+        machine_present: machine == Some(Answer::Present),
+        repo_present: repo == Some(Answer::Present),
         repo_file_here,
+        unknown,
     }
 }
 
@@ -256,31 +286,56 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     let mut warnings: Vec<String> = Vec::new();
     for (part, part_facts) in cat.parts.iter().zip(&per_part) {
         for conflict in &part.conflict {
-            if let Some(key) = &conflict.git_config {
-                let Some(value) = git(&root, &["config", "--get", key]).filter(|v| !v.is_empty())
-                else {
-                    continue;
-                };
-                let vals = values(part, &value, "");
-                hooks.extend(conflict.label.iter().map(|l| fill(l, &vals)));
-                warnings.extend(conflict.warning.iter().map(|w| fill(w, &vals)));
-            } else if conflict.foreign_hooks {
-                if !part_facts.repo_present {
-                    hooks.extend(
-                        foreign_hook_names(&root)
-                            .into_iter()
-                            .map(|n| format!("hook {n}")),
-                    );
+            match &conflict.when {
+                ConflictWhen::GitConfig(key) => {
+                    let value = match git_config(&root, key) {
+                        Ok(Some(v)) if !v.is_empty() => v,
+                        Ok(_) => continue,
+                        Err(why) => {
+                            warnings.push(format!(
+                                "{}: {why}; its conflict check did not run",
+                                part.name()
+                            ));
+                            continue;
+                        }
+                    };
+                    let vals = values(part, &value, "");
+                    hooks.extend(conflict.label.iter().map(|l| fill(l, &vals)));
+                    warnings.extend(conflict.warning.iter().map(|w| fill(w, &vals)));
                 }
-            } else if conflict.paths.iter().any(|p| root.join(p).exists()) {
-                let manager = conflict
-                    .label
-                    .as_deref()
-                    .map(|l| fill(l, &values(part, "", "")));
-                let vals = values(part, "", manager.as_deref().unwrap_or_default());
-                hooks.extend(manager);
-                warnings.extend(conflict.warning.iter().map(|w| fill(w, &vals)));
+                ConflictWhen::ForeignHooks => {
+                    if !part_facts.repo_present {
+                        hooks.extend(
+                            foreign_hook_names(&root)
+                                .into_iter()
+                                .map(|n| format!("hook {n}")),
+                        );
+                    }
+                }
+                ConflictWhen::Paths(paths) => {
+                    if !paths.iter().any(|p| root.join(p).exists()) {
+                        continue;
+                    }
+                    let manager = conflict
+                        .label
+                        .as_deref()
+                        .map(|l| fill(l, &values(part, "", "")));
+                    let vals = values(part, "", manager.as_deref().unwrap_or_default());
+                    hooks.extend(manager);
+                    warnings.extend(conflict.warning.iter().map(|w| fill(w, &vals)));
+                }
             }
+        }
+    }
+
+    // Status queries that ran and gave no answer: the row reads them as
+    // absent, so say so.
+    for (part, part_facts) in cat.parts.iter().zip(&per_part) {
+        for level in &part_facts.unknown {
+            warnings.push(format!(
+                "{}: the {level} status query gave no answer; its row reads it as not installed",
+                part.name()
+            ));
         }
     }
 
@@ -335,24 +390,28 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         (!recommended.is_empty()).then(|| format!("grh install {}", recommended.join(" ")));
 
     if format == crate::status::Format::Json {
+        // Repository facts only: the per-part signals (machine_present,
+        // repo_present, repo_file_here) hold for one part and are read in
+        // that part's row, so a single flag here would mean "some part".
         let mut signals: BTreeMap<String, bool> = BTreeMap::new();
         let no_part = PartFacts {
             machine_present: false,
             repo_present: false,
             repo_file_here: false,
+            unknown: Vec::new(),
         };
         for (name, signal) in Signal::PLAIN {
-            let holds = match signal {
-                Signal::MachinePresent => per_part.iter().any(|f| f.machine_present),
-                Signal::RepoPresent => per_part.iter().any(|f| f.repo_present),
-                Signal::RepoFileHere => per_part.iter().any(|f| f.repo_file_here),
+            let repository_level = match signal {
+                Signal::MachinePresent | Signal::RepoPresent | Signal::RepoFileHere => false,
                 Signal::AdrFolder
                 | Signal::ClaudeSetUp
                 | Signal::CiPresent
                 | Signal::LanguageSupported
-                | Signal::Dep(_) => signal_holds(&signal, &facts, &no_part),
+                | Signal::Dep(_) => true,
             };
-            signals.insert(name.to_string(), holds);
+            if repository_level {
+                signals.insert(name.to_string(), signal_holds(&signal, &facts, &no_part));
+            }
         }
         let prefixes = cat
             .parts
@@ -395,12 +454,21 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
     let width = rows.iter().map(|r| r.part.len()).max().unwrap_or(0);
     let mut lines: Vec<String> = rows
         .iter()
-        .map(|r| format!("{:<width$} {:<13} {}", r.part, r.verdict.as_str(), r.reason))
+        .map(|r| {
+            format!("{:<width$} {:<13} {}", r.part, r.verdict.as_str(), r.reason)
+                .trim_end()
+                .to_string()
+        })
         .collect();
     lines.push(install.unwrap_or_else(|| "nothing to install".to_string()));
     let printed = print_lines(&lines);
+    // A closed stderr is no reason to fail or panic: the rows are written.
+    let stderr = std::io::stderr();
+    let mut err = stderr.lock();
     for w in &warnings {
-        eprintln!("warning: {w}");
+        if writeln!(err, "warning: {w}").is_err() {
+            break;
+        }
     }
     printed
 }

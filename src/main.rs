@@ -29,7 +29,7 @@ enum Command {
         /// Install every published part, with what each needs.
         #[arg(long)]
         all: bool,
-        /// Also arm the current repository (git hooks, the decisions hook, attest's workflow).
+        /// Also set up the current repository (what each part places there).
         #[arg(long)]
         repo: bool,
         /// Back up and overwrite a file grh did not place.

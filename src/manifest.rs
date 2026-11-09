@@ -232,15 +232,13 @@ pub struct Conform {
     pub eslint: Option<String>,
 }
 
-/// The placeholders a `reason`, a `warning` or a `label` may use.
-pub const PLACEHOLDERS: [&str; 6] = [
-    "adr_folder",
-    "ci",
-    "claude_files",
-    "part",
-    "hooks_path",
-    "manager",
-];
+/// The placeholders every template may use: a `reason`, a `warning` or a
+/// `label`.
+pub const PLACEHOLDERS: [&str; 4] = ["adr_folder", "ci", "claude_files", "part"];
+/// What a `git_config` conflict's templates may add: the key's value.
+pub const GIT_CONFIG_PLACEHOLDERS: [&str; 1] = ["hooks_path"];
+/// What a `paths` conflict's `warning` may add: its rendered `label`.
+pub const PATHS_WARNING_PLACEHOLDERS: [&str; 1] = ["manager"];
 
 /// A repository fact a `[[recommend]]` rule can test.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -338,24 +336,76 @@ pub struct Recommend {
     pub reason: String,
 }
 
+/// What a conflict tests in the repository.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictWhen {
+    /// One of these paths exists.
+    Paths(Vec<String>),
+    /// This git config key is set; its value is `{hooks_path}`.
+    GitConfig(String),
+    /// The hooks directory holds hooks the part did not install. grh labels
+    /// each one itself (`hook <name>`), so this kind takes no `warning` or
+    /// `label`.
+    ForeignHooks,
+}
+
 /// Something in a repository that clashes with the part: a list of `paths`,
 /// or a `git_config` key, or `foreign_hooks`.
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "RawConflict")]
 pub struct Conflict {
-    #[serde(default)]
-    pub paths: Vec<String>,
-    pub git_config: Option<String>,
-    #[serde(default)]
-    pub foreign_hooks: bool,
-    /// A template over [`PLACEHOLDERS`], given when the conflict holds.
+    pub when: ConflictWhen,
+    /// A template, given when the conflict holds.
     pub warning: Option<String>,
-    /// A template over [`PLACEHOLDERS`], added to the `hooks` of the audit.
+    /// A template, added to the `hooks` of the audit.
     pub label: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConflict {
+    #[serde(default)]
+    paths: Vec<String>,
+    git_config: Option<String>,
+    #[serde(default)]
+    foreign_hooks: bool,
+    warning: Option<String>,
+    label: Option<String>,
+}
+
+impl TryFrom<RawConflict> for Conflict {
+    type Error = String;
+
+    fn try_from(raw: RawConflict) -> Result<Conflict, String> {
+        let when = match (raw.paths.is_empty(), raw.git_config, raw.foreign_hooks) {
+            (false, None, false) => ConflictWhen::Paths(raw.paths),
+            (true, Some(key), false) => ConflictWhen::GitConfig(key),
+            (true, None, true) => ConflictWhen::ForeignHooks,
+            _ => {
+                return Err(
+                    "a [[conflict]] needs exactly one of paths, git_config and foreign_hooks"
+                        .into(),
+                )
+            }
+        };
+        if when == ConflictWhen::ForeignHooks && (raw.warning.is_some() || raw.label.is_some()) {
+            return Err(
+                "a foreign_hooks [[conflict]] takes no warning or label: grh labels each hook itself"
+                    .into(),
+            );
+        }
+        Ok(Conflict {
+            when,
+            warning: raw.warning,
+            label: raw.label,
+        })
+    }
+}
+
 /// The `{name}` placeholders of a template, or why it is not one.
-pub fn check_template(template: &str) -> Result<(), String> {
+/// `extra` names the placeholders this template's context adds to
+/// [`PLACEHOLDERS`].
+pub fn check_template(template: &str, extra: &[&str]) -> Result<(), String> {
     let mut rest = template;
     while let Some(open) = rest.find('{') {
         let after = &rest[open + 1..];
@@ -363,10 +413,11 @@ pub fn check_template(template: &str) -> Result<(), String> {
             return Err(format!("{template:?} has an unclosed {{"));
         };
         let name = &after[..close];
-        if !PLACEHOLDERS.contains(&name) {
+        if !PLACEHOLDERS.contains(&name) && !extra.contains(&name) {
+            let allowed: Vec<&str> = PLACEHOLDERS.iter().chain(extra).copied().collect();
             return Err(format!(
-                "{template:?} uses the placeholder {{{name}}}; the placeholders are {}",
-                PLACEHOLDERS.join(", ")
+                "{template:?} uses the placeholder {{{name}}}; here the placeholders are {}",
+                allowed.join(", ")
             ));
         }
         rest = &after[close + 1..];
@@ -554,7 +605,7 @@ impl Manifest {
     fn check_rules(&self) -> Result<(), Exit> {
         let status_at = |level: Option<&ToolLevel>| level.is_some_and(|l| l.status.is_some());
         for rule in &self.recommend {
-            check_template(&rule.reason).map_err(bad)?;
+            check_template(&rule.reason, &[]).map_err(bad)?;
             for c in &rule.when {
                 let (needed, label) = match c.signal {
                     Signal::MachinePresent => (status_at(self.machine()), "machine"),
@@ -575,21 +626,23 @@ impl Manifest {
             }
         }
         for c in &self.conflict {
-            let kinds = usize::from(!c.paths.is_empty())
-                + usize::from(c.git_config.is_some())
-                + usize::from(c.foreign_hooks);
-            if kinds != 1 {
-                return Err(bad(
-                    "a [[conflict]] needs exactly one of paths, git_config and foreign_hooks",
-                ));
+            let (label_extra, warning_extra): (&[&str], &[&str]) = match &c.when {
+                ConflictWhen::Paths(paths) => {
+                    if paths.iter().any(|p| !stays_inside(p)) {
+                        return Err(bad(
+                            "a [[conflict]] path must be relative and stay inside the repository",
+                        ));
+                    }
+                    (&[], &PATHS_WARNING_PLACEHOLDERS)
+                }
+                ConflictWhen::GitConfig(_) => (&GIT_CONFIG_PLACEHOLDERS, &GIT_CONFIG_PLACEHOLDERS),
+                ConflictWhen::ForeignHooks => (&[], &[]),
+            };
+            if let Some(l) = &c.label {
+                check_template(l, label_extra).map_err(bad)?;
             }
-            if c.paths.iter().any(|p| !stays_inside(p)) {
-                return Err(bad(
-                    "a [[conflict]] path must be relative and stay inside the repository",
-                ));
-            }
-            for t in c.warning.iter().chain(&c.label) {
-                check_template(t).map_err(bad)?;
+            if let Some(w) = &c.warning {
+                check_template(w, warning_extra).map_err(bad)?;
             }
         }
         Ok(())
@@ -905,7 +958,7 @@ mod tests {
          [tool.machine.status]\nargs = [\"s\"]\nexit = { present = 0, absent = 1 }\n\
          [[recommend]]\nwhen = [\"machine_present\", \"!ci_present\", \"dep:@x/\"]\nverdict = \"already here\"\nreason = \"{part} in {ci}\"\n\
          [[recommend]]\nwhen = []\nverdict = \"not useful\"\nreason = \"none\"\n\
-         [[conflict]]\npaths = [\".husky\"]\nlabel = \"{manager}\"\nwarning = \"{manager} in {part}\"\n\
+         [[conflict]]\npaths = [\".husky\"]\nlabel = \"husky\"\nwarning = \"{manager} in {part}\"\n\
          [[conflict]]\ngit_config = \"core.hooksPath\"\nlabel = \"p={hooks_path}\"\n\
          [[conflict]]\nforeign_hooks = true\n";
 
@@ -917,6 +970,15 @@ mod tests {
         assert!(m.recommend[0].when[1].negated);
         assert_eq!(m.recommend[0].when[2].signal, Signal::Dep("@x/".into()));
         assert_eq!(m.conflict.len(), 3);
+        assert_eq!(
+            m.conflict[0].when,
+            ConflictWhen::Paths(vec![".husky".into()])
+        );
+        assert_eq!(
+            m.conflict[1].when,
+            ConflictWhen::GitConfig("core.hooksPath".into())
+        );
+        assert_eq!(m.conflict[2].when, ConflictWhen::ForeignHooks);
     }
 
     #[test]
@@ -940,6 +1002,20 @@ mod tests {
         ));
         refused(V3.replace("paths = [\".husky\"]", "paths = [\"../x\"]"));
         refused(V3.replace("verdict = \"not useful\"", "verdict = \"maybe\""));
+        // a placeholder outside the context that gives it a value
+        refused(V3.replace("{part} in {ci}", "{manager}"));
+        refused(V3.replace("{part} in {ci}", "{hooks_path}"));
+        refused(V3.replace("label = \"husky\"", "label = \"{manager}\""));
+        refused(V3.replace("{manager} in {part}", "{hooks_path} in {part}"));
+        // foreign hooks are labelled by grh: their text would be dropped
+        refused(V3.replace(
+            "foreign_hooks = true\n",
+            "foreign_hooks = true\nwarning = \"w\"\n",
+        ));
+        refused(V3.replace(
+            "foreign_hooks = true\n",
+            "foreign_hooks = true\nlabel = \"l\"\n",
+        ));
     }
 
     #[test]

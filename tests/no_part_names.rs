@@ -1,7 +1,8 @@
-//! grh's install path names no part: what a tool does lives in its manifest.
-//! Reads the sources of the generic modules, drops their `#[cfg(test)]`
-//! modules and comments, and fails on a string literal that names a part.
-//! `claude` may appear only in extension.rs, for an MCP registration.
+//! grh names no part or tool: what a tool does lives in its manifest. Reads
+//! every `.rs` file under `src/`, drops its `#[cfg(test)]` modules and
+//! comments, and fails on a string literal that names a part or a tool.
+//! `claude` may appear only in the files that talk to the host
+//! (`HOST_FILES`).
 
 use std::path::Path;
 
@@ -180,14 +181,32 @@ fn grh_names_no_part_or_tool() {
         "the scan found only {} sources: {files:?}",
         files.len()
     );
+    // The walk must reach the modules that hold the messages, wherever they
+    // move to.
+    for module in [
+        "main.rs",
+        "audit.rs",
+        "install.rs",
+        "catalog.rs",
+        "manifest.rs",
+    ] {
+        assert!(
+            files.iter().any(|f| f.ends_with(module)),
+            "the scan missed {module}: {files:?}"
+        );
+    }
     let mut named = Vec::new();
-    let mut scanned = Vec::new();
+    let mut silent = Vec::new();
     for file in &files {
         let source = std::fs::read_to_string(src.join(file)).unwrap();
+        // A source with code but no literal at all means the scanner lost
+        // its place in it (an unclosed raw string, say), not a clean file.
+        if literals(&without_test_modules(&source)).is_empty() && source.contains("fn ") {
+            silent.push(file.clone());
+        }
         named.extend(names_in(file, &source));
-        scanned.push(file.clone());
     }
-    assert_eq!(scanned, files, "every source is scanned");
+    assert!(silent.is_empty(), "no literal read from {silent:?}");
     assert!(named.is_empty(), "{}", named.join("\n"));
 }
 

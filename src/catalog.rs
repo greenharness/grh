@@ -6,7 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Deserialize;
 
 use crate::exit::Exit;
-use crate::manifest::Manifest;
+use crate::manifest::{Manifest, Signal};
 use crate::ops::{text, Ui};
 
 const CATALOG: &str = include_str!("../catalog.toml");
@@ -138,6 +138,26 @@ impl Catalog {
         for part in &self.parts {
             part.check()
                 .map_err(|e| invalid(format!("part {}: {}", part.name(), text(&e))))?;
+            for rule in &part.recommend {
+                for c in &rule.when {
+                    let (list, name) = match c.signal {
+                        Signal::AdrFolder => (&self.audit.adr_folder, "adr_folder"),
+                        Signal::ClaudeSetUp => (&self.audit.claude_set_up, "claude_set_up"),
+                        Signal::CiPresent => (&self.audit.ci_present, "ci_present"),
+                        Signal::MachinePresent
+                        | Signal::RepoPresent
+                        | Signal::LanguageSupported
+                        | Signal::RepoFileHere
+                        | Signal::Dep(_) => continue,
+                    };
+                    if list.is_empty() {
+                        return Err(invalid(format!(
+                            "part {} uses the signal {name}, but [audit] {name} lists no path, so it could never hold",
+                            part.name()
+                        )));
+                    }
+                }
+            }
         }
         let mut taken: BTreeMap<&str, &str> = BTreeMap::new();
         for part in &self.parts {
@@ -354,10 +374,10 @@ impl Catalog {
         let members = members.join(" ");
         Some(match verb {
             Verb::Uninstall => format!(
-                "profiles were removed in 0.3.0; to remove what {name} installed: grh uninstall {members}"
+                "profiles were removed in 0.3.0.\n  to remove what {name} installed: grh uninstall {members}"
             ),
             Verb::Install | Verb::Dispatch => format!(
-                "profiles were removed in 0.3.0; to install what {name} installed: grh install {members} (or grh install --all)"
+                "profiles were removed in 0.3.0.\n  to install what {name} installed: grh install {members}\n  or every part: grh install --all"
             ),
         })
     }
@@ -463,6 +483,19 @@ mod tests {
     }
 
     #[test]
+    fn a_path_signal_with_no_audit_paths_is_refused() {
+        let rule = "[[part.recommend]]\nwhen = [\"ci_present\"]\nverdict = \"recommend\"\nreason = \"ci\"\n";
+        let source = fixture(&["a"], &[("a", &[], &[], &[])]).replace(">=0.2", ">=0.3") + rule;
+        refused(&source, &["a", "ci_present", "[audit]"]);
+        let with_paths = source.replacen(
+            "[retired_names]\n",
+            "[retired_names]\n[audit]\nci_present = [\".ci\"]\n",
+            1,
+        );
+        assert!(Catalog::parse(&with_paths).is_ok());
+    }
+
+    #[test]
     fn the_shipped_catalog_passes_checked_and_every_edge_points_down_order() {
         let c = Catalog::load().unwrap();
         let rank = |n: &str| c.order.iter().position(|o| o == n).unwrap();
@@ -552,7 +585,7 @@ mod tests {
         let notice = c.retired_notice(&args(&["solo"]), Verb::Install).unwrap();
         assert_eq!(
             notice,
-            "profiles were removed in 0.3.0; to install what solo installed: grh install greengate greenpiste (or grh install --all)"
+            "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenpiste\n  or every part: grh install --all"
         );
         let notice = c
             .retired_notice(&args(&["greengate", "solo"]), Verb::Uninstall)

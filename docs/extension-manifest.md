@@ -86,10 +86,20 @@ part's declared status at that level; the part must declare one),
 `[[repo_file]]` exists in a CI directory) and `dep:<prefix>` (`package.json`
 declares a dependency starting with the prefix). Any other signal is refused.
 
-Templates (`reason`, `warning`, `label`) may use only `{adr_folder}`, `{ci}`,
-`{claude_files}`, `{part}`, `{hooks_path}` and `{manager}`; anything else is
+Every template (`reason`, `warning`, `label`) may use `{adr_folder}`, `{ci}`,
+`{claude_files}` and `{part}`. A `git_config` conflict's `label` and
+`warning` may also use `{hooks_path}` (the key's value), and a `paths`
+conflict's `warning` may use `{manager}` (its rendered `label`). Any other
+placeholder, or one used outside the context that gives it a value, is
 refused when the manifest loads.
 
-In `grh audit --json`, `signals` is one flat map: `machine_present`,
-`repo_present` and `repo_file_here` are true when they hold for any part.
-Each part's own row reads the signal for that part.
+A `foreign_hooks` conflict takes no `warning` or `label`: grh adds each hook
+it did not install to `hooks` itself, as `hook <name>`.
+
+A rule using `adr_folder`, `claude_set_up` or `ci_present` needs the
+catalog's `[audit]` list for it to name at least one path.
+
+In `grh audit --json`, `signals` holds the repository facts only
+(`adr_folder`, `claude_set_up`, `ci_present`, `language_supported` and each
+`dep:<prefix>` a rule names). `machine_present`, `repo_present` and
+`repo_file_here` belong to one part and are read in that part's row.

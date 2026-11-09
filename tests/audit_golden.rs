@@ -268,3 +268,33 @@ fn every_fixture_has_a_golden() {
         );
     }
 }
+
+#[test]
+fn a_status_query_without_an_answer_warns_that_its_row_reads_it_absent() {
+    let fx = Fixture {
+        name: "status_unknown",
+        files: &[("src/main.rs", "fn main() {}\n")],
+        hooks_path: None,
+        env: &[("STUB_AMONT", "garbled")],
+    };
+    let doc = audit(Path::new(env!("CARGO_BIN_EXE_grh")), &fx);
+    let warnings: Vec<&str> = doc["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.starts_with("greengate: the repo status query gave no answer")),
+        "{warnings:?}"
+    );
+    let row = doc["parts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["part"] == "greengate")
+        .unwrap();
+    assert_eq!(row["verdict"], "recommend");
+}

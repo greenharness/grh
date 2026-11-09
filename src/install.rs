@@ -208,12 +208,14 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
         return Ok(());
     }
     // What to type again: with `--all` the whole command, built from the flags
-    // actually given, so a copied hint does not drop `--repo` or `--replace`.
+    // actually given, so a copied hint does not drop `--repo`, `--replace` or
+    // `--quiet`.
     let rerun = if opts.all {
         format!(
-            "grh install --all{}{} --yes",
+            "grh install --all{}{}{} --yes",
             if opts.repo { " --repo" } else { "" },
-            if opts.replace { " --replace" } else { "" }
+            if opts.replace { " --replace" } else { "" },
+            if opts.quiet { " --quiet" } else { "" }
         )
     } else {
         "--yes".to_string()
@@ -261,14 +263,14 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
     run.sum.print(&run.ui);
     if opts.all && !failed.is_empty() {
+        let skipped = if skipped.is_empty() {
+            String::new()
+        } else {
+            format!("; skipped because of it: {}", skipped.join(", "))
+        };
         return Err(Exit::Failed(format!(
-            "failed: {}; skipped: {}",
+            "{} did not install{skipped}; the other parts are installed. Fix the errors above, then run {rerun}",
             failed.join(", "),
-            if skipped.is_empty() {
-                "none".to_string()
-            } else {
-                skipped.join(", ")
-            }
         )));
     }
     match worst_of(failures) {

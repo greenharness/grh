@@ -440,17 +440,17 @@ fn a_retired_name_exits_2_with_the_hint_and_changes_nothing() {
     let files = fx.files("bin");
     let hint = |verb: &str, what: &str, members: &str| {
         format!(
-            "profiles were removed in 0.3.0; to {what} what solo installed: grh {verb} {members}"
+            "profiles were removed in 0.3.0.\n  to {what} what solo installed: grh {verb} {members}"
         )
     };
     for (args, expected) in [
         (
             &["install", "solo", "--yes"][..],
-            hint("install", "install", "gate guardrails") + " (or grh install --all)",
+            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
         ),
         (
             &["install", "solo", "gate", "--yes"],
-            hint("install", "install", "gate guardrails") + " (or grh install --all)",
+            hint("install", "install", "gate guardrails") + "\n  or every part: grh install --all",
         ),
         (
             &["uninstall", "solo", "--yes"],
@@ -525,7 +525,7 @@ fn all_skips_a_part_whose_need_failed_and_exits_1_naming_both() {
     let o = fx.grh("work", &[], &["install", "--all", "--repo", "--yes"]);
     assert_eq!(code(&o), 1, "{}", err(&o));
     assert!(
-        err(&o).contains("failed: gate; skipped: attest"),
+        err(&o).contains("gate did not install; skipped because of it: attest; the other parts are installed. Fix the errors above, then run grh install --all --repo --yes"),
         "{}",
         err(&o)
     );
@@ -581,7 +581,7 @@ fn all_skips_a_part_whose_need_installed_its_binary_but_failed_its_integration()
     let o = fx.grh("work", &[], &["install", "--all", "--repo", "--yes"]);
     assert_eq!(code(&o), 1, "{}", err(&o));
     assert!(
-        err(&o).contains("failed: gate; skipped: attest"),
+        err(&o).contains("gate did not install; skipped because of it: attest; the other parts are installed. Fix the errors above, then run grh install --all --repo --yes"),
         "{}",
         err(&o)
     );
@@ -589,6 +589,13 @@ fn all_skips_a_part_whose_need_installed_its_binary_but_failed_its_integration()
     assert!(!receipt.contains("\"part\": \"attest\""), "{receipt}");
     assert!(receipt.contains("\"part\": \"guardrails\""), "{receipt}");
     assert!(!fx.p("work/.github/workflows/attest.yml").exists());
+
+    // A rerun fails the same way and leaves the parts that installed as they
+    // were.
+    let entries = fx.entries();
+    let o = fx.grh("work", &[], &["install", "--all", "--repo", "--yes"]);
+    assert_eq!(code(&o), 1, "{}", err(&o));
+    assert_eq!(fx.entries(), entries, "the rerun changed the receipt");
 }
 
 #[test]
