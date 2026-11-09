@@ -18,6 +18,16 @@ sha2 = "0.10"
 tar = "0.4"
 toml = "0.8"
 ureq = { version = "2.12", default-features = false, features = ["tls"] }
+# ratatui draws the install checklist; the version amont-fleet uses, with the
+# crossterm backend only (the default features add macros and widgets the
+# checklist does not draw). It pulls ratatui-core, ratatui-widgets and
+# ratatui-crossterm; releases roughly monthly; if abandoned, the checklist
+# falls back to the part listing and the model in src/checklist.rs stays.
+ratatui = { version = "0.30", default-features = false, features = ["crossterm"] }
+# crossterm reads keys and sets raw mode for the checklist, at amont-fleet's
+# version; it pulls rustix and signal-hook; slow, steady releases; if
+# abandoned, raw mode moves to rustix.
+crossterm = "0.29"
 
 [dev-dependencies]
 tempfile = "3"

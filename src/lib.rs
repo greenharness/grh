@@ -3,6 +3,7 @@
 
 pub mod audit;
 pub mod catalog;
+pub mod checklist;
 pub mod dispatch;
 pub mod exit;
 pub mod extension;

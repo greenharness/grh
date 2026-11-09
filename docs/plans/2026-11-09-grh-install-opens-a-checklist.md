@@ -171,7 +171,7 @@ is relais, today) is opt-in everywhere. The low findings carried from the
   `tests/audit_golden.rs`, `tests/cli.rs`, `scripts/e2e.sh`,
   `docs/extension-manifest.md`.
 - [x] Phase 2 — audit as a pure `assess`, no output change; `Assessment` carries the install list (recommended, non-experimental) and the experimental list, so the checklist and `run` share them: `src/audit.rs`.
-- [ ] Phase 3 — the checklist model and its rendering: a pure state machine
+- [x] Phase 3 — the checklist model and its rendering: a pure state machine
   (rows, cursor, ticks, needs, notice; `on_key(Key) -> Action`) and a
   `draw(frame, &model)`; ratatui 0.30 and crossterm 0.29: `src/checklist.rs`,
   `src/main.rs` (module), `Cargo.toml`, `Cargo.lock`, `deny.toml` if a new
