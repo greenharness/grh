@@ -535,15 +535,20 @@ pub fn run(cat: &Catalog, dir: Option<&Path>, format: crate::status::Format) -> 
         ));
     }
     let printed = print_lines(&lines);
-    // A closed stderr is no reason to fail or panic: the rows are written.
+    print_warnings(&warnings);
+    printed
+}
+
+/// Each warning as `warning: …` on stderr. A closed stderr is no reason to
+/// fail or panic: whatever was to be shown has been written.
+pub(crate) fn print_warnings(warnings: &[String]) {
     let stderr = std::io::stderr();
     let mut err = stderr.lock();
-    for w in &warnings {
+    for w in warnings {
         if writeln!(err, "warning: {w}").is_err() {
             break;
         }
     }
-    printed
 }
 
 /// The recommended parts, split in row order into those an install takes and

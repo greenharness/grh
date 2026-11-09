@@ -153,9 +153,14 @@ impl Checklist {
             notice: None,
         };
         if let Some(assessment) = assessment {
+            // `install` already leaves experiments out; the model keeps its
+            // own rule too, so an experiment is never ticked for the person
+            // whatever list it is handed.
             for name in &assessment.install {
                 if let Some(index) = checklist.index_of(name) {
-                    checklist.tick(index);
+                    if !checklist.parts[index].experimental {
+                        checklist.tick(index);
+                    }
                 }
             }
         }
@@ -985,8 +990,10 @@ order = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta"]
     }
 
     #[test]
-    fn pre_ticks_follow_the_install_list_and_the_repository_line() {
-        let checklist = model(&["zeta"], &[]);
+    fn pre_ticks_follow_the_install_list_and_never_an_experiment() {
+        // epsilon is the fixture's experiment: handed in the install list, it
+        // stays unticked.
+        let checklist = model(&["zeta", "epsilon"], &[]);
         assert_eq!(ticked(&checklist), vec!["zeta"]);
         assert_eq!(checklist.repo, Some(true));
     }

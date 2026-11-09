@@ -28,7 +28,7 @@ ratatui = { version = "0.30", default-features = false, features = ["crossterm"]
 # version; it pulls rustix and signal-hook; slow, steady releases; if
 # abandoned, raw mode moves to rustix.
 crossterm = "0.29"
-# signal-hook turns SIGTERM and SIGHUP into a flag the checklist loop reads,
+# signal-hook turns SIGTERM, SIGHUP and SIGINT into a flag the checklist loop reads,
 # so the terminal is restored before grh exits; the version crossterm already
 # pulls in, so it adds no crate.
 signal-hook = "0.3"

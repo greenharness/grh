@@ -209,19 +209,14 @@ fn install_command(opts: &Opts) -> String {
 fn choose_and_run(cat: &Catalog, opts: &Opts, ui: &Ui) -> Result<(), Exit> {
     let assessment = audit::assess(cat, None)?;
     if let Some(found) = &assessment {
-        for warning in &found.warnings {
-            eprintln!("warning: {warning}");
-        }
+        audit::print_warnings(&found.warnings);
     }
     let mut receipt = receipt::read_in(&receipt::state_dir()?)?;
     receipt.rename_parts(|name| cat.name_of_alias(name));
     let installed: Vec<String> = receipt.entries.iter().map(|e| e.part.clone()).collect();
     let model = checklist::Checklist::new(cat, assessment.as_ref(), &installed);
     match checklist::open(model)? {
-        checklist::Opened::Unavailable(error) => Err(Exit::Usage(format!(
-            "checklist unavailable: {error}\n{}",
-            listing(cat)
-        ))),
+        checklist::Opened::Unavailable(error) => Err(unavailable(&error, cat)),
         checklist::Opened::TooSmall => Err(Exit::Usage(format!(
             "{}\n{}",
             checklist::TOO_SMALL,
@@ -880,9 +875,26 @@ fn place_inside(repo: &Path, dir: &str, rel: &str) -> Result<PathBuf, Exit> {
     }
 }
 
+/// The refusal when the terminal cannot host the checklist: why, then the
+/// listing, as off a terminal.
+fn unavailable(error: &std::io::Error, cat: &Catalog) -> Exit {
+    Exit::Usage(format!("checklist unavailable: {error}\n{}", listing(cat)))
+}
+
 #[cfg(test)]
 mod command_tests {
     use super::*;
+
+    #[test]
+    fn an_unavailable_terminal_names_the_error_then_lists_the_parts() {
+        let cat = Catalog::load().unwrap();
+        let Exit::Usage(text) = unavailable(&std::io::Error::other("no cursor reply"), &cat) else {
+            panic!("an unavailable terminal is a usage refusal");
+        };
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some("checklist unavailable: no cursor reply"));
+        assert_eq!(text.split_once('\n').unwrap().1, listing(&cat));
+    }
 
     #[test]
     fn the_printed_command_carries_every_flag_the_install_runs_with() {
