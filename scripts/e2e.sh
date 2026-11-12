@@ -150,7 +150,11 @@ step "HOME is as it was, apart from grh and the tools' own state"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
               -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
+              -e '^\./\.config/greengate/greengate-migrat' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
+# greengate 4.0 records once per machine that its 3.x names were migrated
+# (`greengate-migrated`, and the flock beside it): machine state, kept on
+# purpose across an uninstall so a reinstall does not migrate again.
 # amont-agent's own uninstall leaves the settings.json its install created,
 # emptied to `{}`. Allowed only while empty.
 # holds-until: amont-agent's `uninstall --write` removes a settings.json it
