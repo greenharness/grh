@@ -93,7 +93,7 @@ grep -q '^mcp add' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp add was recorded"
 # Keep the parts' binaries for the adopted cases below.
 tools="$scratch/tools"
 mkdir -p "$tools"
-cp "$GRH_BIN_DIR/amont" "$GRH_BIN_DIR/amont-agent" "$tools/"
+cp "$GRH_BIN_DIR/greengate" "$GRH_BIN_DIR/amont-agent" "$tools/"
 
 step "grh status --json is one JSON document"
 grh status --json > "$scratch/status.json"
@@ -130,7 +130,7 @@ step "grh uninstall, bare, as the site prints it"
 step "the fixture repository is disarmed"
 shims=$(find "$repo/.git/hooks" -type f ! -name '*.sample' 2> /dev/null || true)
 if [ -n "$shims" ]; then
-    echo "amont shims left in the fixture repository:"
+    echo "greengate shims left in the fixture repository:"
     printf '%s\n' "$shims"
     exit 1
 fi
@@ -150,7 +150,11 @@ step "HOME is as it was, apart from grh and the tools' own state"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
               -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
+              -e '^\./\.config/greengate/greengate-migrat' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
+# greengate 4.0 records once per machine that its 3.x names were migrated
+# (`greengate-migrated`, and the flock beside it): machine state, kept on
+# purpose across an uninstall so a reinstall does not migrate again.
 # amont-agent's own uninstall leaves the settings.json its install created,
 # emptied to `{}`. Allowed only while empty.
 # holds-until: amont-agent's `uninstall --write` removes a settings.json it
@@ -176,14 +180,14 @@ grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall re
 step "a binary that was there first survives uninstall"
 other="$scratch/other"
 mkdir -p "$other"
-ln -s "$tools/amont" "$other/amont"
+ln -s "$tools/greengate" "$other/greengate"
 # Under its old name: the alias resolves to greengate and warns once.
 PATH="$other:$PATH" grh install gate --yes 2> "$scratch/alias.err"
 grep -q 'gate is now greengate' "$scratch/alias.err" || { echo "no alias warning:"; cat "$scratch/alias.err"; exit 1; }
-if [ -e "$GRH_BIN_DIR/amont" ]; then
-    echo "grh placed an amont although one was on PATH"
+if [ -e "$GRH_BIN_DIR/greengate" ]; then
+    echo "grh placed a greengate although one was on PATH"
     exit 1
 fi
 PATH="$other:$PATH" grh uninstall --yes
-[ -L "$other/amont" ] || { echo "uninstall removed the adopted amont"; exit 1; }
+[ -L "$other/greengate" ] || { echo "uninstall removed the adopted greengate"; exit 1; }
 echo "adopted integration and binary left alone"

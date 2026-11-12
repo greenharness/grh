@@ -43,7 +43,7 @@ case "$name:$*" in
   aval:"mcp uninstall --write") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.machine";;
   aval:"hook install") touch "$st.repo";;
   aval:"hook uninstall --write") rm -f "$st.repo";;
-  amont:"list --json") tpl="{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}"; [ -n "$FAKE_TEMPLATE_RAW" ] && tpl=$FAKE_TEMPLATE_RAW; echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":$tpl}";;
+  amont:"list --json"|greengate:"list --json") tpl="{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}"; [ -n "$FAKE_TEMPLATE_RAW" ] && tpl=$FAKE_TEMPLATE_RAW; echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":$tpl}";;
   amont:init) touch "$st.repo";;
   amont:"uninstall --repo") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.repo";;
   amont-agent:"doctor --json") echo "{\"integration\":{\"state\":\"$(state machine)\"}}";;
@@ -1055,12 +1055,25 @@ fn an_unreachable_armed_repo_keeps_its_entry_and_the_binary_and_exits_1() {
 }
 
 /// Replace the fixture catalog with the shipped one, whose parts carry the
-/// audit rules.
+/// audit rules, and its pinned copies, which grh reads from `manifests/`
+/// beside the catalog.
 fn use_shipped_catalog(fx: &Fx) {
     put(
         &fx.p("catalog.toml"),
         include_str!("../catalog.toml").as_bytes(),
     );
+    for entry in fs::read_dir(shipped_manifests()).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        put(
+            &fx.p(&format!("manifests/{name}")),
+            &fs::read(&path).unwrap(),
+        );
+    }
+}
+
+fn shipped_manifests() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("manifests")
 }
 
 fn audit_install(fx: &Fx) -> (Option<String>, Vec<String>) {
@@ -1622,8 +1635,8 @@ fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
     let fx = Fx::new();
     use_shipped_catalog(&fx);
     git_init(&fx);
-    executable(&fx.p("bin/amont"), FAKE);
-    put(&fx.p("fstate/amont.repo"), b"");
+    executable(&fx.p("bin/greengate"), FAKE);
+    put(&fx.p("fstate/greengate.repo"), b"");
     let path = format!("{}:/usr/bin:/bin", fx.p("bin").display());
     let output = fx.grh("work", &[("PATH", &path)], &["audit", "--json"]);
     assert_eq!(code(&output), 0, "{}", err(&output));
@@ -1659,19 +1672,26 @@ fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
 
 #[test]
 fn audit_reads_the_gate_state_from_the_catalog_query() {
-    // The same installed fake amont, but the catalog's repo-level status now
+    // The same installed fake greengate, but the part's repo-level status now
     // reads a JSON path the fake never prints: audit must follow the
-    // catalog, so the gate is no longer "already here".
+    // catalog, so the gate is no longer "already here". greengate is pinned,
+    // so the path lives in its copy, and the pin's sha256 follows the edit.
     let fx = Fx::new();
-    let catalog = include_str!("../catalog.toml").replacen(
+    use_shipped_catalog(&fx);
+    let original = fs::read(shipped_manifests().join("greengate.toml")).unwrap();
+    let copy = String::from_utf8(original.clone()).unwrap().replacen(
         "[\"installed\", \"state\"]",
         "[\"nowhere\", \"state\"]",
         1,
     );
+    assert_ne!(copy.as_bytes(), &original[..], "the status path moved");
+    let catalog = include_str!("../catalog.toml")
+        .replace(&sha256_hex(&original), &sha256_hex(copy.as_bytes()));
     put(&fx.p("catalog.toml"), catalog.as_bytes());
+    put(&fx.p("manifests/greengate.toml"), copy.as_bytes());
     git_init(&fx);
-    executable(&fx.p("bin/amont"), FAKE);
-    put(&fx.p("fstate/amont.repo"), b"");
+    executable(&fx.p("bin/greengate"), FAKE);
+    put(&fx.p("fstate/greengate.repo"), b"");
     let path = format!("{}:/usr/bin:/bin", fx.p("bin").display());
     let output = fx.grh("work", &[("PATH", &path)], &["audit", "--json"]);
     assert_eq!(code(&output), 0, "{}", err(&output));

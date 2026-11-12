@@ -242,6 +242,34 @@ pub fn catalog_location() -> CatalogLocation {
     }
 }
 
+/// The inline parts and the resolved pins, in the order their `[[part]]` and
+/// `[[pinned]]` tables appear in `source`. Parts are listed (the audit, the
+/// install checklist) in catalog order, so a part keeps its place when it
+/// moves from inline to pinned. TOML keeps each array's own order but not how
+/// the two interleave, so the headers are counted from the text; when they
+/// cannot be (a table written another way), the pins follow the inline parts.
+fn in_declared_order(source: &str, inline: Vec<Part>, pinned: Vec<Part>) -> Vec<Part> {
+    let mut sequence = Vec::with_capacity(inline.len() + pinned.len());
+    for line in source.lines() {
+        match line.split('#').next().unwrap_or_default().trim() {
+            "[[part]]" => sequence.push(false),
+            "[[pinned]]" => sequence.push(true),
+            _ => {}
+        }
+    }
+    let pins = sequence.iter().filter(|is_pin| **is_pin).count();
+    if pins != pinned.len() || sequence.len() - pins != inline.len() {
+        let mut parts = inline;
+        parts.extend(pinned);
+        return parts;
+    }
+    let (mut inline, mut pinned) = (inline.into_iter(), pinned.into_iter());
+    sequence
+        .into_iter()
+        .filter_map(|is_pin| if is_pin { pinned.next() } else { inline.next() })
+        .collect()
+}
+
 impl Catalog {
     /// The compiled-in catalog, or the file `GRH_CATALOG` names (a test hook
     /// so the integration tests can pin their own fixture tarballs). A bad
@@ -285,20 +313,21 @@ impl Catalog {
     /// checked as an inline one is.
     pub fn parse_with(source: &str, copies: &[(&str, &[u8])]) -> Result<Catalog, Exit> {
         let raw: RawCatalog = toml::from_str(source).map_err(|e| Exit::Failed(e.to_string()))?;
-        let mut parts = raw.parts;
         let mut pinned_names: BTreeSet<&str> = BTreeSet::new();
+        let mut pinned = Vec::with_capacity(raw.pinned.len());
         for pin in &raw.pinned {
             if !pinned_names.insert(&pin.name) {
                 return Err(invalid(format!("two pins name the part {}", pin.name)));
             }
-            if parts.iter().any(|p| p.name() == pin.name) {
+            if raw.parts.iter().any(|p| p.name() == pin.name) {
                 return Err(invalid(format!(
                     "the part {} is both a [[part]] and a [[pinned]]",
                     pin.name
                 )));
             }
-            parts.push(pin.resolve(copies)?);
+            pinned.push(pin.resolve(copies)?);
         }
+        let parts = in_declared_order(source, raw.parts, pinned);
         if let Some((name, _)) = copies.iter().find(|(name, _)| !pinned_names.contains(name)) {
             return Err(invalid(format!(
                 "manifests/{name}.toml is a copy of no pinned part"
@@ -738,6 +767,20 @@ mod tests {
             .map(|p| p.name())
             .collect();
         assert_eq!(resolved, ["lab", "a"]);
+    }
+
+    #[test]
+    fn a_pinned_part_keeps_its_declared_place_among_the_inline_parts() {
+        let copy = lab_copy("");
+        let source = fixture(&["a", "lab", "b"], &[("a", &[], &[], &[])])
+            + &format!(
+                "[[pinned]]\nname = \"lab\"\nrepo = \"o/lab\"\ntag = \"v1.2.0\"\nsha256 = \"{}\"\n",
+                sha256_hex(copy.as_bytes())
+            )
+            + "[[part]]\n[part.extension]\nname = \"b\"\nversion = \"1\"\nharness = \">=0.2\"\n";
+        let catalog = Catalog::parse_with(&source, &[("lab", copy.as_bytes())]).unwrap();
+        let listed: Vec<&str> = catalog.parts.iter().map(|p| p.name()).collect();
+        assert_eq!(listed, ["a", "lab", "b"]);
     }
 
     #[test]

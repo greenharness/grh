@@ -77,7 +77,7 @@ const FIXTURES: &[Fixture] = &[
         name: "gate_installed",
         files: &[("src/main.rs", "fn main() {}\n")],
         hooks_path: None,
-        env: &[("STUB_AMONT", "present")],
+        env: &[("STUB_GREENGATE", "present")],
     },
     Fixture {
         name: "claude_setup",
@@ -287,7 +287,7 @@ fn a_status_query_without_an_answer_warns_that_its_row_reads_it_absent() {
         name: "status_unknown",
         files: &[("src/main.rs", "fn main() {}\n")],
         hooks_path: None,
-        env: &[("STUB_AMONT", "garbled")],
+        env: &[("STUB_GREENGATE", "garbled")],
     };
     let doc = audit(Path::new(env!("CARGO_BIN_EXE_grh")), &fx);
     let warnings: Vec<&str> = doc["warnings"]

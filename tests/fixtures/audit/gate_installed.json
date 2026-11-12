@@ -20,7 +20,7 @@
   "parts": [
     {
       "part": "gate",
-      "reason": "amont's git hooks are installed here",
+      "reason": "greengate's git hooks are installed here",
       "verdict": "already here"
     },
     {

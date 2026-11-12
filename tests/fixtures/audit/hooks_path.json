@@ -67,6 +67,6 @@
     "guardrails"
   ],
   "warnings": [
-    "core.hooksPath redirects git hooks to .githooks; amont refuses a redirected hooks path: unset it before grh install greengate"
+    "core.hooksPath redirects git hooks to .githooks; greengate refuses a redirected hooks path: unset it before grh install greengate"
   ]
 }

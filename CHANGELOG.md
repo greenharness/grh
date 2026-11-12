@@ -5,6 +5,21 @@ section is missing here.
 
 ## Unreleased
 
+### Changed
+
+- **greengate is pinned at 4.0.0.** grh reads greengate's own published
+  manifest instead of a copy in its catalog, so `grh install greengate` places
+  the `greengate` binary (it placed `amont` 2.3.1 before). Run
+  `grh install greengate` once after upgrading.
+
+### Fixed
+
+- A pinned part keeps its place in the catalog: `grh audit` and the install
+  checklist list parts in the order the catalog declares them, so pinning a
+  part no longer moves it to the end of the list.
+- A catalog with pinned copies builds: the generated table of copies used a
+  slice that a `const` refuses.
+
 ## v0.5.0
 
 ### Added
