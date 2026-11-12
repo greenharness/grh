@@ -41,77 +41,11 @@ adr_folder = [".adr.yaml", "docs/adr", "docs/decisions", "doc/adr"]
 claude_set_up = [".claude", "CLAUDE.md", "AGENTS.md"]
 ci_present = [".github/workflows", ".forgejo/workflows"]
 
-[[part]]
-[part.extension]
+[[pinned]]
 name = "greengate"
-version = "2.3.1"
-harness = ">=0.3"
-summary = "what a commit or a push may carry: git hooks"
-needs = []
-aliases = ["gate"]
-
-[part.tool]
-bin = "amont"
-[part.tool.release]
 repo = "greenharness/greengate"
-version = "2.3.1"
-[part.tool.release.sha256]
-aarch64-apple-darwin = "fd0abfa930a965153ff450fc82602ca3f909b2d1933289d62a204af8d721c3cc"
-x86_64-apple-darwin = "e59b4d02be2601a08d808d6be73e2ba10d2f92bb48739fd83150332a66c98461"
-aarch64-unknown-linux-gnu = "7b4c7a2982e6ea3aaa44a1e1ec90c1a0f2a8b92737ab35048017c7b0161cc726"
-x86_64-unknown-linux-gnu = "1c93464178819e192a40706d0ab853f054c05523bac44e2707be2cd48594c37e"
-# `amont init`, never `amont install`: install copies the binary and fills
-# the machine's git template dir, machine state a repo step must not touch.
-[part.tool.repo_level]
-install = ["{bin}", "init"]
-uninstall = ["{bin}", "uninstall", "--repo"]
-[part.tool.repo_level.status]
-args = ["list", "--json"]
-json = ["installed", "state"]
-# Keep the placed binary while amont's git template directory bakes its path.
-[part.tool.keep_binary]
-args = ["list", "--json"]
-state = ["template_dir", "state"]
-absent = "absent"
-shims = ["template_dir", "shims"]
-binary = "binary"
-warning = "repositories armed by hand with it fail their next commit until `amont init` re-arms them"
-
-[part.bundle]
-skills = ["relais-verified-push", "merge-when-green", "tag-release"]
-
-[[part.conflict]]
-git_config = "core.hooksPath"
-label = "core.hooksPath={hooks_path}"
-warning = "core.hooksPath redirects git hooks to {hooks_path}; amont refuses a redirected hooks path: unset it before grh install {part}"
-
-[[part.conflict]]
-paths = [".husky"]
-label = "husky (.husky/)"
-warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
-
-[[part.conflict]]
-paths = ["lefthook.yml", ".lefthook.yml"]
-label = "lefthook"
-warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
-
-[[part.conflict]]
-paths = [".pre-commit-config.yaml"]
-label = "pre-commit (.pre-commit-config.yaml)"
-warning = "{manager} already manages git hooks here; the {part} part (amont) installs its own hooks next to it: check they do not clash"
-
-[[part.conflict]]
-foreign_hooks = true
-
-[[part.recommend]]
-when = ["repo_present"]
-verdict = "already here"
-reason = "amont's git hooks are installed here"
-
-[[part.recommend]]
-when = []
-verdict = "recommend"
-reason = "a git repository: gate its commits and pushes"
+tag = "v4.0.0"
+sha256 = "399ad2fd9cabce5fad1fad990ae60c21cd0f55bb5da9083d25ae797e19739dae"
 
 [[part]]
 [part.extension]

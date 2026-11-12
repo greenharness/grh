@@ -30,7 +30,9 @@ fn main() {
     let mut out = String::from("pub const MANIFESTS: &[(&str, &[u8])] = &[\n");
     for (name, path) in &copies {
         let path = path.to_string_lossy();
-        writeln!(out, "    ({name:?}, &include_bytes!({path:?})[..]),").expect("write to a String");
+        // `include_bytes!` is a `&[u8; N]`, which coerces to `&[u8]` here; a
+        // `[..]` slice of it is an `Index` call, refused in a const.
+        writeln!(out, "    ({name:?}, include_bytes!({path:?})),").expect("write to a String");
     }
     out.push_str("];\n");
     let target = PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR")).join("manifests.rs");
