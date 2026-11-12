@@ -5,6 +5,8 @@ section is missing here.
 
 ## Unreleased
 
+## v0.5.0
+
 ### Added
 
 - **Pinned manifests.** A part whose repository ships its own
@@ -15,6 +17,7 @@ section is missing here.
 
 ### Changed
 
+- Pins skills 0.6.0: the workflow part gains the `browser-check` agent. It runs one browser check (Chrome DevTools) on haiku and returns measured facts and screenshot paths filed under `attestations/<sha>/`, so screenshots stay out of the calling session; `worktree-task` F2 routes UI verification through it. Run `grh install workflow` once after upgrading.
 - **`Catalog` no longer implements `Deserialize`.** Build a catalog with
   `Catalog::parse` or `Catalog::parse_with`, which resolve pins and run the
   catalog's checks.
