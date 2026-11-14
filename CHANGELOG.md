@@ -13,6 +13,10 @@ section is missing here.
   entries written for the old name keep firing. On a machine where grh placed
   `amont-agent` before, `grh install greenpiste` fetches greenpiste, refreshes
   the hook integration to the new path and rewrites its recorded undo.
+- **greengate is pinned at 4.0.0.** grh reads greengate's own published
+  manifest instead of a copy in its catalog, so `grh install greengate` places
+  the `greengate` binary (it placed `amont` 2.3.1 before). Run
+  `grh install greengate` once after upgrading.
 
 ### Added
 
@@ -24,13 +28,6 @@ section is missing here.
   the next install, and a grh-owned integration that recorded the old path is
   run again and its recorded install and undo commands rewritten. An adopted
   integration is left alone and the command is reported.
-
-### Changed
-
-- **greengate is pinned at 4.0.0.** grh reads greengate's own published
-  manifest instead of a copy in its catalog, so `grh install greengate` places
-  the `greengate` binary (it placed `amont` 2.3.1 before). Run
-  `grh install greengate` once after upgrading.
 
 ### Fixed
 

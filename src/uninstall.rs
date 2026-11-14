@@ -649,7 +649,14 @@ fn remove_aliases(
         let Kind::BinaryAlias { path, sha256 } = &e.kind else {
             continue;
         };
-        if blocked || binary_kept {
+        if blocked {
+            sum.gap(
+                &format!("{path} kept: an integration of {name} is not confirmed removed"),
+                &format!("grh uninstall {name}"),
+            );
+            continue;
+        }
+        if binary_kept {
             sum.gap(
                 &format!("{path} kept: the {name} binary it copies is still in place"),
                 &format!("grh uninstall {name}"),
