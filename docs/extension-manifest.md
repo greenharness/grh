@@ -48,7 +48,7 @@ eslint = "duro lint"
 The catalog's `[[part]]` entries are manifests of this same type. v2 adds the following; any of them requires `harness = ">=0.2"` (a requirement that 0.1 satisfies is refused).
 
 - `[extension]`: `summary`, `needs`, `enhances`, `aliases` (part names), `hint` (printed, never run) and `published` (default true).
-- `[tool]`: `bin`; `[tool.release]`: `repo`, `version`, `sha256` per target triple.
+- `[tool]`: `bin`, `bin_aliases` (optional list of plain file names: grh places a copy of the verified binary under each name beside it, records each in the receipt, refreshes a copy it placed, keeps and reports a file of that name it did not place, and removes its copies on uninstall); `[tool.release]`: `repo`, `version`, `sha256` per target triple.
 - `[tool.machine]` and `[tool.repo_level]`: `install`, `uninstall` (with `{bin}`), `requires` (host commands that must be on PATH) and `status`, either `{ args, exit = { present, absent } }` or `{ args, json = ["installed", "state"] }`.
 - `[tool.keep_binary]`: `args`, `state` (JSON path), `absent`, `shims` (JSON path), `binary`, `warning`: when a placed binary must stay.
 - `[[repo_file]]`: `dirs` (the first that exists in the repository, else the last), `path`, `content`; relative and inside the repository.

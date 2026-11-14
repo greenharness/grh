@@ -42,6 +42,8 @@ pub struct Run<'a> {
     replace: bool,
     repo: Option<PathBuf>,
     bundle: Option<Result<Bundle, String>>,
+    /// The part being installed got a different binary than the receipt had.
+    rebinned: bool,
 }
 
 /// What the person is shown before agreeing to a manifest the catalog does
@@ -128,6 +130,7 @@ impl<'a> Run<'a> {
             replace,
             repo,
             bundle: bundle.map(Ok),
+            rebinned: false,
         }
     }
 }
@@ -358,6 +361,7 @@ impl Run<'_> {
             ui.fail(&format!("{}: {}", part.name(), text(&e)));
             failures.push(e);
         };
+        self.rebinned = false;
         let bin = if part.bin().is_some() {
             match self.binary(part) {
                 Ok(b) => Some(b),
@@ -370,6 +374,9 @@ impl Run<'_> {
             None
         };
         if let Some(bin) = &bin {
+            if let Err(e) = self.place_aliases(part, bin) {
+                note(&self.ui, e);
+            }
             let repo = self.repo.clone();
             if let Some(machine) = part.machine() {
                 if let Err(e) = self.integrate(part, Level::Machine, None, bin, machine) {
@@ -435,19 +442,15 @@ impl Run<'_> {
                     return Ok(promoted);
                 }
             }
-            if done && path.exists() {
+            let stale = placed && path.file_name().is_some_and(|n| n != name);
+            if done && path.exists() && !stale {
                 let how = if placed { "placed by grh" } else { "adopted" };
                 self.ui
                     .ok(&format!("{name}: {} ({how}, unchanged)", path.display()));
                 return Ok(path);
             }
-            self.store.remove_where(|e| {
-                part.answers_to(&e.part)
-                    && matches!(
-                        e.kind,
-                        Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
-                    )
-            })?;
+            self.rebinned = stale;
+            self.retire_recorded_binaries(part)?;
         }
         if let Some(found) = dispatch::find(name) {
             let path = absolute(&found);
@@ -501,6 +504,110 @@ impl Run<'_> {
         self.ui
             .ok(&format!("{name}: placed {}", placed.path.display()));
         Ok(placed.path)
+    }
+
+    /// Forget the binaries the receipt records for `part`. A binary grh placed
+    /// under a name the part now declares as an alias stays on record as that
+    /// alias, so the new copy can refresh it.
+    fn retire_recorded_binaries(&mut self, part: &Part) -> Result<(), Exit> {
+        for e in self.store.receipt.entries.iter_mut() {
+            if !part.answers_to(&e.part) {
+                continue;
+            }
+            if let Kind::BinaryPlaced { path, sha256, .. } = &e.kind {
+                let is_alias = Path::new(path)
+                    .file_name()
+                    .is_some_and(|n| part.bin_aliases().iter().any(|a| n == a.as_str()));
+                if is_alias && !sha256.is_empty() {
+                    e.kind = Kind::BinaryAlias {
+                        path: path.clone(),
+                        sha256: sha256.clone(),
+                    };
+                }
+            }
+        }
+        self.store.remove_where(|e| {
+            part.answers_to(&e.part)
+                && matches!(
+                    e.kind,
+                    Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
+                )
+        })
+    }
+
+    /// Place a copy of the placed binary under each alias the part declares,
+    /// beside it. A copy grh placed is refreshed; a file it did not place is
+    /// kept and reported.
+    fn place_aliases(&mut self, part: &Part, bin: &Path) -> Result<(), Exit> {
+        let placed = recorded_bin(&self.store.receipt, part)
+            .is_some_and(|(path, placed)| placed && path == bin);
+        if !placed || part.bin_aliases().is_empty() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(bin)
+            .map_err(|e| Exit::Failed(format!("cannot read {}: {e}", bin.display())))?;
+        let sha256 = sha256_hex(&bytes);
+        let dir = bin.parent().unwrap_or_else(|| Path::new("."));
+        for alias in part.bin_aliases() {
+            let target = dir.join(alias);
+            let path = target.to_string_lossy().into_owned();
+            let recorded = self
+                .store
+                .receipt
+                .entries
+                .iter()
+                .find_map(|e| match &e.kind {
+                    Kind::BinaryAlias { path: p, sha256 }
+                        if part.answers_to(&e.part) && *p == path =>
+                    {
+                        Some(sha256.clone())
+                    }
+                    _ => None,
+                });
+            let current = match std::fs::read(&target) {
+                Ok(cur) => Some(sha256_hex(&cur)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(Exit::Failed(format!("cannot read {path}: {e}"))),
+            };
+            match current {
+                Some(cur) if cur == sha256 && recorded.as_deref() == Some(sha256.as_str()) => {
+                    self.ui
+                        .ok(&format!("{alias}: {path} (placed by grh, unchanged)"));
+                    continue;
+                }
+                Some(cur) if cur != sha256 && recorded.as_deref() != Some(cur.as_str()) => {
+                    self.sum.gap(
+                        &format!(
+                            "{alias}: {path} is not grh's, so the {alias} copy was not placed"
+                        ),
+                        &format!("move it away, then grh install {}", part.name()),
+                    );
+                    self.ui
+                        .warn(&format!("{alias}: {path} exists and is not grh's, kept"));
+                    continue;
+                }
+                _ => {}
+            }
+            self.store.remove_where(|e| {
+                part.answers_to(&e.part)
+                    && matches!(&e.kind, Kind::BinaryAlias { path: p, .. } if *p == path)
+            })?;
+            let idx = self.store.begin(Entry::machine(
+                part.name(),
+                Kind::BinaryAlias {
+                    path: path.clone(),
+                    sha256: sha256.clone(),
+                },
+            ))?;
+            if let Err(e) = write_atomic(&target, &bytes, 0o755) {
+                self.store.receipt.entries.remove(idx);
+                self.store.save()?;
+                return Err(e);
+            }
+            self.store.done(idx)?;
+            self.ui.ok(&format!("{alias}: placed {path}"));
+        }
+        Ok(())
     }
 
     /// A pending binary-placed row whose file is in grh's bin dir: the step
@@ -592,9 +699,27 @@ impl Run<'_> {
                         && e.state == State::Done
                 });
                 if known {
+                    if let Some(idx) = self.stale_tool_install(part, level, repo, bin, integ) {
+                        return self.refresh_integration(part, level, repo, bin, integ, idx);
+                    }
                     self.ui
                         .ok(&format!("{name}: {which} integration present (unchanged)"));
                     return Ok(());
+                }
+                if self.rebinned {
+                    let adopted = self.store.receipt.entries.iter().any(|e| {
+                        same_scope(e, part, level, repo)
+                            && matches!(e.kind, Kind::ToolInstallAdopted)
+                            && e.state == State::Done
+                    });
+                    if adopted {
+                        self.sum.gap(
+                            &format!(
+                                "{name}: the {which} integration is not grh's and still points at the previous binary; left alone"
+                            ),
+                            &format!("run {}", command_line(&subst(&integ.install, bin))),
+                        );
+                    }
                 }
                 // A step an earlier run left pending, now confirmed present.
                 let pending = self.store.receipt.entries.iter().position(|e| {
@@ -673,6 +798,73 @@ impl Run<'_> {
                 }
             }
         }
+    }
+
+    /// The index of the grh-owned, done ToolInstall of this scope whose
+    /// recorded install or undo command names a different binary than `bin`.
+    fn stale_tool_install(
+        &self,
+        part: &Part,
+        level: Level,
+        repo: Option<&Path>,
+        bin: &Path,
+        integ: &ToolLevel,
+    ) -> Option<usize> {
+        let differs = |recorded: &[String], template: &[String]| {
+            let current = subst(template, bin);
+            template
+                .iter()
+                .enumerate()
+                .any(|(i, word)| word.contains("{bin}") && recorded.get(i) != current.get(i))
+        };
+        self.store.receipt.entries.iter().position(|e| {
+            same_scope(e, part, level, repo)
+                && e.state == State::Done
+                && matches!(&e.kind, Kind::ToolInstall { argv, undo_argv, .. }
+                    if differs(argv, &integ.install) || differs(undo_argv, &integ.uninstall))
+        })
+    }
+
+    /// Run the install again for the binary now selected, and record its
+    /// arguments, once the tool confirms the integration present.
+    fn refresh_integration(
+        &mut self,
+        part: &Part,
+        level: Level,
+        repo: Option<&Path>,
+        bin: &Path,
+        integ: &ToolLevel,
+        idx: usize,
+    ) -> Result<(), Exit> {
+        let which = if level == Level::Machine {
+            "machine"
+        } else {
+            "repo"
+        };
+        let argv = subst(&integ.install, bin);
+        let code = run_tool(&self.ui, &argv, repo).map_err(Exit::Failed)?;
+        if owner::level_state(integ, bin, repo) != Answer::Present {
+            return Err(Exit::Failed(format!(
+                "{} exited {code} and the {which} integration is not confirmed present",
+                command_line(&argv)
+            )));
+        }
+        if let Kind::ToolInstall {
+            argv: recorded,
+            undo_argv,
+            ..
+        } = &mut self.store.receipt.entries[idx].kind
+        {
+            *recorded = argv;
+            *undo_argv = subst(&integ.uninstall, bin);
+        }
+        self.store.save()?;
+        self.ui.ok(&format!(
+            "{}: {which} integration refreshed for {}",
+            part.name(),
+            bin.display()
+        ));
+        Ok(())
     }
 
     fn place_skills(&mut self, part: &Part) -> Result<(), Exit> {

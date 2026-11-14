@@ -123,6 +123,11 @@ pub enum Kind {
     BinaryAdopted {
         path: String,
     },
+    /// A copy of the part's binary under another name, beside it.
+    BinaryAlias {
+        path: String,
+        sha256: String,
+    },
     ToolInstall {
         argv: Vec<String>,
         undo_argv: Vec<String>,
@@ -498,6 +503,10 @@ mod tests {
             },
             Kind::BinaryAdopted {
                 path: "/b/amont".into(),
+            },
+            Kind::BinaryAlias {
+                path: "/b/old".into(),
+                sha256: "03".into(),
             },
             Kind::ToolInstall {
                 argv: vec!["aval".into(), "mcp".into()],

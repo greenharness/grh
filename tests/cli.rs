@@ -1732,3 +1732,151 @@ fn a_pinned_part_installs_from_a_fixture_release_beside_gh_catalog() {
     assert_eq!(code(&output), 1, "{}", err(&output));
     assert!(err(&output).contains("pinned-demo"), "{}", err(&output));
 }
+
+// --- bin_aliases and a renamed binary ---
+
+/// The fixture catalog where the `guardrails` part also places `amont-old`.
+fn bin_alias_fx() -> Fx {
+    let fx = Fx::new();
+    let catalog = fs::read_to_string(fx.p("catalog.toml")).unwrap().replace(
+        "bin = \"amont-agent\"\n",
+        "bin = \"amont-agent\"\nbin_aliases = [\"amont-old\"]\n",
+    );
+    put(&fx.p("catalog.toml"), catalog.as_bytes());
+    fx
+}
+
+#[test]
+fn a_bin_alias_is_a_byte_identical_copy_placed_once_and_removed_on_uninstall() {
+    let fx = bin_alias_fx();
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert_eq!(fx.files("bin"), ["amont-agent", "amont-old"]);
+    assert_eq!(
+        fs::read(fx.p("bin/amont-agent")).unwrap(),
+        fs::read(fx.p("bin/amont-old")).unwrap()
+    );
+    assert!(fx.receipt().contains("binary-alias"), "{}", fx.receipt());
+    let entries = fx.entries();
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert_eq!(fx.entries(), entries);
+    let output = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(fx.files("bin").is_empty(), "{:?}", fx.files("bin"));
+    assert!(!fx.receipt().contains("binary-alias"), "{}", fx.receipt());
+}
+
+#[test]
+fn a_foreign_file_at_the_alias_path_is_kept_and_reported() {
+    let fx = bin_alias_fx();
+    executable(&fx.p("bin/amont-old"), "#!/bin/sh\necho mine\n");
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert_eq!(
+        fs::read_to_string(fx.p("bin/amont-old")).unwrap(),
+        "#!/bin/sh\necho mine\n"
+    );
+    assert!(err(&output).contains("amont-old"), "{}", err(&output));
+    assert!(!fx.receipt().contains("binary-alias"), "{}", fx.receipt());
+    let output = fx.grh("work", &[], &["uninstall", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(fx.p("bin/amont-old").exists());
+}
+
+#[test]
+fn a_grh_placed_binary_under_an_alias_name_is_refreshed_into_the_copy() {
+    let fx = bin_alias_fx();
+    let old = fx.p("bin/amont-old");
+    executable(&old, "#!/bin/sh\necho previous\n");
+    seed_receipt(
+        &fx,
+        &serde_json::json!([{
+            "part": "guardrails", "level": "machine", "state": "done",
+            "kind": { "binary-placed": {
+                "path": old.to_string_lossy(),
+                "sha256": sha256_hex(b"#!/bin/sh\necho previous\n"),
+            } }
+        }]),
+    );
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert_eq!(
+        fs::read(&old).unwrap(),
+        fs::read(fx.p("bin/amont-agent")).unwrap()
+    );
+}
+
+fn seed_renamed_binary(fx: &Fx, kind: &str) -> PathBuf {
+    let old = fx.p("bin/previous-name");
+    executable(&old, FAKE);
+    let path = old.to_string_lossy().into_owned();
+    let tool = if kind == "tool-install" {
+        serde_json::json!({ "tool-install": {
+            "argv": [path, "install", "--write"],
+            "undo_argv": [path, "uninstall", "--write"],
+            "status": { "args": ["doctor", "--json"], "json": ["integration", "state"] },
+        } })
+    } else {
+        serde_json::json!("tool-install-adopted")
+    };
+    seed_receipt(
+        fx,
+        &serde_json::json!([
+            { "part": "guardrails", "level": "machine", "state": "done",
+              "kind": { "binary-placed": { "path": path, "sha256": sha256_hex(FAKE.as_bytes()) } } },
+            { "part": "guardrails", "level": "machine", "state": "done", "kind": tool },
+        ]),
+    );
+    fs::write(fx.p("fstate/amont-agent.machine"), "").unwrap();
+    old
+}
+
+#[test]
+fn a_placed_binary_of_another_name_is_replaced_and_its_integration_refreshed_once() {
+    let fx = Fx::new();
+    let old = seed_renamed_binary(&fx, "tool-install");
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(fx.p("bin/amont-agent").exists());
+    let new = fx.p("bin/amont-agent").to_string_lossy().into_owned();
+    let doc: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
+    let install = doc["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find_map(|e| e["kind"].get("tool-install"))
+        .expect("the integration stays grh-owned");
+    assert_eq!(
+        install["argv"],
+        serde_json::json!([new, "install", "--write"])
+    );
+    assert_eq!(
+        install["undo_argv"],
+        serde_json::json!([new, "uninstall", "--write"])
+    );
+    assert!(!fx.receipt().contains(&*old.to_string_lossy()));
+    assert!(
+        fx.log().contains("amont-agent install --write"),
+        "{}",
+        fx.log()
+    );
+
+    let entries = fx.entries();
+    let installs = fx.log().matches("install --write").count();
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert_eq!(fx.entries(), entries);
+    assert_eq!(fx.log().matches("install --write").count(), installs);
+}
+
+#[test]
+fn an_adopted_integration_is_left_alone_when_the_binary_changes_and_the_command_is_reported() {
+    let fx = Fx::new();
+    seed_renamed_binary(&fx, "adopted");
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(!fx.log().contains("install --write"), "{}", fx.log());
+    assert!(fx.receipt().contains("tool-install-adopted"));
+    assert!(err(&output).contains("install --write"), "{}", err(&output));
+}

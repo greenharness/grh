@@ -5,6 +5,17 @@ section is missing here.
 
 ## Unreleased
 
+### Added
+
+- A manifest may declare `[tool] bin_aliases`: grh places a byte-identical copy
+  of the binary under each alias beside it, records it in the receipt,
+  refreshes a copy it placed, keeps and reports a file of that name it did not
+  place, and removes its copies on uninstall.
+- A placed binary whose file name is no longer the part's `bin` is replaced on
+  the next install, and a grh-owned integration that recorded the old path is
+  run again and its recorded install and undo commands rewritten. An adopted
+  integration is left alone and the command is reported.
+
 ### Changed
 
 - **greengate is pinned at 4.0.0.** grh reads greengate's own published

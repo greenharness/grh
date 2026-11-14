@@ -618,5 +618,71 @@ fn remove_binary(
             _ => {}
         }
     }
+    failures.extend(remove_aliases(ui, store, sum, name, belongs, blocked));
+    failures
+}
+
+/// Remove the copies of a binary grh placed under other names, once the
+/// binary itself is gone: a copy changed since grh placed it is left.
+fn remove_aliases(
+    ui: &Ui,
+    store: &mut Store,
+    sum: &mut Summary,
+    name: &str,
+    belongs: &dyn Fn(&str) -> bool,
+    blocked: bool,
+) -> Vec<Exit> {
+    let mut failures: Vec<Exit> = Vec::new();
+    let binary_kept = store
+        .receipt
+        .entries
+        .iter()
+        .any(|e| belongs(&e.part) && matches!(e.kind, Kind::BinaryPlaced { .. }));
+    let aliases: Vec<Entry> = store
+        .receipt
+        .entries
+        .iter()
+        .filter(|e| belongs(&e.part) && matches!(e.kind, Kind::BinaryAlias { .. }))
+        .cloned()
+        .collect();
+    for e in aliases {
+        let Kind::BinaryAlias { path, sha256 } = &e.kind else {
+            continue;
+        };
+        if blocked || binary_kept {
+            sum.gap(
+                &format!("{path} kept: the {name} binary it copies is still in place"),
+                &format!("grh uninstall {name}"),
+            );
+            continue;
+        }
+        match std::fs::read(path) {
+            Err(x) if x.kind() == std::io::ErrorKind::NotFound => {}
+            Err(x) => {
+                failures.push(fail(
+                    ui,
+                    name,
+                    format!("cannot read {path}: {x}; entry kept"),
+                ));
+                continue;
+            }
+            Ok(cur) if sha256.is_empty() || sha256_hex(&cur) == *sha256 => {
+                if let Err(x) = std::fs::remove_file(path) {
+                    failures.push(fail(
+                        ui,
+                        name,
+                        format!("cannot remove {path}: {x}; entry kept"),
+                    ));
+                    continue;
+                }
+                ui.ok(&format!("removed {path}"));
+            }
+            Ok(_) => sum.skip(
+                &format!("{path}: changed since grh placed it"),
+                "remove it by hand if you no longer want it",
+            ),
+        }
+        failures.extend(store.remove_where(|x| *x == e).err());
+    }
     failures
 }
