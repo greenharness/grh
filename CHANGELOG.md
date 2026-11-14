@@ -7,10 +7,27 @@ section is missing here.
 
 ### Changed
 
+- Pins greenpiste 4.0.1 from its shipped manifest (was the catalog's
+  amont-agent 3.23.1 entry). The binary is `greenpiste`; the manifest's
+  `bin_aliases` has grh place `amont-agent` beside it as a copy, so hook
+  entries written for the old name keep firing. On a machine where grh placed
+  `amont-agent` before, `grh install greenpiste` fetches greenpiste, refreshes
+  the hook integration to the new path and rewrites its recorded undo.
 - **greengate is pinned at 4.0.0.** grh reads greengate's own published
   manifest instead of a copy in its catalog, so `grh install greengate` places
   the `greengate` binary (it placed `amont` 2.3.1 before). Run
   `grh install greengate` once after upgrading.
+
+### Added
+
+- A manifest may declare `[tool] bin_aliases`: grh places a byte-identical copy
+  of the binary under each alias beside it, records it in the receipt,
+  refreshes a copy it placed, keeps and reports a file of that name it did not
+  place, and removes its copies on uninstall.
+- A placed binary whose file name is no longer the part's `bin` is replaced on
+  the next install, and a grh-owned integration that recorded the old path is
+  run again and its recorded install and undo commands rewritten. An adopted
+  integration is left alone and the command is reported.
 
 ### Fixed
 

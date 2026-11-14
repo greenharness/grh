@@ -47,42 +47,11 @@ repo = "greenharness/greengate"
 tag = "v4.0.0"
 sha256 = "399ad2fd9cabce5fad1fad990ae60c21cd0f55bb5da9083d25ae797e19739dae"
 
-[[part]]
-[part.extension]
+[[pinned]]
 name = "greenpiste"
-version = "3.23.1"
-harness = ">=0.3"
-summary = "what an agent's tool call may do: a Claude Code hook"
-needs = []
-aliases = ["guardrails"]
-
-[part.tool]
-bin = "amont-agent"
-[part.tool.release]
 repo = "greenharness/greenpiste"
-version = "3.23.1"
-[part.tool.release.sha256]
-aarch64-apple-darwin = "3a5d3870fca20ba1ed4514bf1dc116c2e4a66a483359b6ed1b70c0b868695224"
-x86_64-apple-darwin = "cd37589483102e52c64bfd5dd3eb79d410a33cc9acf096349b30d22eb058b886"
-aarch64-unknown-linux-gnu = "66fe403bb6644cadc6179077f52f26977e96167acf2a81f7c27dcaa7959d2e8d"
-x86_64-unknown-linux-gnu = "4e69a29c9e887103c00fecd3a5c931ab7c1897ab18e1083781e99a0820c68edf"
-[part.tool.machine]
-install = ["{bin}", "install", "--write"]
-uninstall = ["{bin}", "uninstall", "--write"]
-requires = ["claude"]
-[part.tool.machine.status]
-args = ["doctor", "--json"]
-json = ["integration", "state"]
-
-[[part.recommend]]
-when = ["machine_present"]
-verdict = "already here"
-reason = "amont-agent's integration is installed"
-
-[[part.recommend]]
-when = []
-verdict = "recommend"
-reason = "a git repository: keep agents inside the rules"
+tag = "v4.0.1"
+sha256 = "e594b8187f0aa065bff8cf54d17bf3e24f381c818b5d5517fc884a208715c8e0"
 
 [[part]]
 [part.extension]

@@ -6,7 +6,7 @@
 #   scripts/e2e.sh <path to the built grh binary>
 #
 # Everything happens under a scratch HOME. The tool state dirs the parts keep
-# after their own uninstall (relais's state, amont-agent's journal) are the
+# after their own uninstall (relais's state, greenpiste's journal under ~/.claude/amont-agent/) are the
 # only leftovers allowed.
 set -eu
 
@@ -93,7 +93,7 @@ grep -q '^mcp add' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp add was recorded"
 # Keep the parts' binaries for the adopted cases below.
 tools="$scratch/tools"
 mkdir -p "$tools"
-cp "$GRH_BIN_DIR/greengate" "$GRH_BIN_DIR/amont-agent" "$tools/"
+cp "$GRH_BIN_DIR/greengate" "$GRH_BIN_DIR/greenpiste" "$tools/"
 
 step "grh status --json is one JSON document"
 grh status --json > "$scratch/status.json"
@@ -155,9 +155,9 @@ leftover=$(comm -13 "$before" "$scratch/after.txt" \
 # greengate 4.0 records once per machine that its 3.x names were migrated
 # (`greengate-migrated`, and the flock beside it): machine state, kept on
 # purpose across an uninstall so a reinstall does not migrate again.
-# amont-agent's own uninstall leaves the settings.json its install created,
+# greenpiste's own uninstall leaves the settings.json its install created,
 # emptied to `{}`. Allowed only while empty.
-# holds-until: amont-agent's `uninstall --write` removes a settings.json it
+# holds-until: greenpiste's `uninstall --write` removes a settings.json it
 # created and left empty (follow-up after amont-agent 3.9.0).
 if [ "$(cat "$CLAUDE_CONFIG_DIR/settings.json" 2> /dev/null)" = "{}" ]; then
     leftover=$(printf '%s\n' "$leftover" | grep -v '^\./\.claude/settings\.json$' || true)
@@ -170,12 +170,12 @@ fi
 echo "nothing left behind"
 
 step "an integration that was there first survives uninstall"
-"$tools/amont-agent" install --write
-grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "amont-agent wrote no hook entry"; exit 1; }
+"$tools/greenpiste" install --write
+grep -q 'greenpiste' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "greenpiste wrote no hook entry"; exit 1; }
 grh install greenpiste --yes
 grh uninstall --yes
-grep -q 'amont-agent' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
-"$tools/amont-agent" uninstall --write
+grep -q 'greenpiste' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
+"$tools/greenpiste" uninstall --write
 
 step "a binary that was there first survives uninstall"
 other="$scratch/other"

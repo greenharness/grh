@@ -27,7 +27,7 @@ lists the parts and exits 2.
 |---|---|---|
 | decisions | aval | what is decided: architecture decision records, resolved |
 | greengate (was gate) | amont | what a commit or a push may carry: git hooks |
-| greenpiste (was guardrails) | amont-agent | what an agent's tool call may do: a Claude Code hook |
+| greenpiste (was guardrails) | greenpiste (and `amont-agent`, a copy) | what an agent's tool call may do: a Claude Code hook |
 | router | relais | which model runs a bounded task, verified and accounted (an experiment: never ticked for you, left out of `--all`) |
 | conform | adr-lint | which decided code rules a tree breaks, by lint (needs decisions) |
 | attest | git-attest | CI skips what your laptop already checked (needs greengate) |
@@ -55,7 +55,7 @@ install and uninstall commands. It never edits a tool's configuration itself.
   `$GRH_BIN_DIR`). A binary already on your PATH is *adopted*: grh uses it and
   never removes it.
 - **Integrations.** grh runs the tool's own command, for example
-  `amont-agent install --write`. It records the command and its undo, and
+  `greenpiste install --write`. It records the command and its undo, and
   checks the result through the tool's own query (`doctor --json`,
   `list --json`). When that query cannot answer, grh changes nothing.
 - **Skills and agents.** grh copies them from

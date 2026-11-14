@@ -98,6 +98,9 @@ pub struct Extension {
 #[serde(deny_unknown_fields)]
 pub struct Tool {
     pub bin: Option<String>,
+    /// Other file names the binary is also placed under, beside it.
+    #[serde(default)]
+    pub bin_aliases: Vec<String>,
     pub release: Option<Release>,
     pub machine: Option<ToolLevel>,
     pub repo_level: Option<ToolLevel>,
@@ -647,6 +650,10 @@ impl Manifest {
         self.tool.as_ref()?.bin.as_deref()
     }
 
+    pub fn bin_aliases(&self) -> &[String] {
+        self.tool.as_ref().map_or(&[], |t| &t.bin_aliases)
+    }
+
     pub fn release(&self) -> Option<&Release> {
         self.tool.as_ref()?.release.as_ref()
     }
@@ -836,8 +843,19 @@ impl Tool {
         if self.bin.as_deref().is_some_and(|b| !is_plain_name(b)) {
             return Err(bad("[tool] bin is not a plain file name"));
         }
+        if self.bin_aliases.iter().any(|a| !is_plain_name(a)) {
+            return Err(bad("[tool] bin_aliases names plain file names"));
+        }
+        if self
+            .bin_aliases
+            .iter()
+            .any(|a| Some(a) == self.bin.as_ref())
+        {
+            return Err(bad("[tool] bin_aliases repeats bin"));
+        }
         if self.bin.is_none()
             && (self.release.is_some()
+                || !self.bin_aliases.is_empty()
                 || self.machine.is_some()
                 || self.repo_level.is_some()
                 || self.keep_binary.is_some())
@@ -964,6 +982,26 @@ mod tests {
         };
         assert_eq!(path, &["installed", "state"]);
         assert_eq!(m.repo_file[0].dirs, [".forgejo", ".github"]);
+    }
+
+    #[test]
+    fn bin_aliases_parse_and_default_to_none() {
+        assert!(Manifest::parse(V2).unwrap().bin_aliases().is_empty());
+        let with = V2.replace(
+            "[tool]\nbin = \"tool\"\n",
+            "[tool]\nbin = \"tool\"\nbin_aliases = [\"old\", \"older\"]\n",
+        );
+        assert_eq!(
+            Manifest::parse(&with).unwrap().bin_aliases(),
+            ["old", "older"]
+        );
+        for bad in ["[\"a/b\"]", "[\"tool\"]"] {
+            let text = V2.replace(
+                "[tool]\nbin = \"tool\"\n",
+                &format!("[tool]\nbin = \"tool\"\nbin_aliases = {bad}\n"),
+            );
+            assert!(Manifest::parse(&text).is_err(), "{bad}");
+        }
     }
 
     #[test]

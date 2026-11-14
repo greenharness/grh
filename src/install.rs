@@ -350,17 +350,52 @@ pub fn run(cat: &Catalog, opts: &Opts) -> Result<(), Exit> {
     }
 }
 
+/// The part's binary, and whether it replaced one the receipt recorded under
+/// another name.
+struct FoundBinary {
+    path: PathBuf,
+    replaced: bool,
+    /// Earlier copies and rows to delete once the new binary and its
+    /// integrations are in place.
+    superseded: Vec<Superseded>,
+}
+
+/// Which receipt row a superseded file is recorded by.
+#[derive(Clone, Copy, PartialEq)]
+enum SupersededRow {
+    Binary,
+    /// A binary grh adopted and did not place: its row goes, its file stays.
+    Adopted,
+    Alias,
+}
+
+/// A file grh recorded earlier, with the sha256 it recorded, that the new
+/// binary replaces. Nothing is deleted until the replacement works.
+struct Superseded {
+    path: String,
+    sha256: String,
+    row: SupersededRow,
+}
+
 impl Run<'_> {
     /// Install one part; every failure is reported and returned.
     pub fn part(&mut self, part: &Part) -> Vec<Exit> {
         let mut failures: Vec<Exit> = Vec::new();
+        let step_failed = std::cell::Cell::new(false);
         let mut note = |ui: &Ui, e: Exit| {
             ui.fail(&format!("{}: {}", part.name(), text(&e)));
+            step_failed.set(true);
             failures.push(e);
         };
+        let mut rebinned = false;
+        let mut superseded: Vec<Superseded> = Vec::new();
         let bin = if part.bin().is_some() {
             match self.binary(part) {
-                Ok(b) => Some(b),
+                Ok(found) => {
+                    rebinned = found.replaced;
+                    superseded = found.superseded;
+                    Some(found.path)
+                }
                 Err(e) => {
                     note(&self.ui, e);
                     None
@@ -369,17 +404,27 @@ impl Run<'_> {
         } else {
             None
         };
+        let gaps_before = self.sum.gaps.len();
         if let Some(bin) = &bin {
+            if let Err(e) = self.place_aliases(part, bin) {
+                note(&self.ui, e);
+            }
             let repo = self.repo.clone();
             if let Some(machine) = part.machine() {
-                if let Err(e) = self.integrate(part, Level::Machine, None, bin, machine) {
+                if let Err(e) = self.integrate(part, Level::Machine, None, bin, machine, rebinned) {
                     note(&self.ui, e);
                 }
             }
             if let (Some(r), Some(repo)) = (part.repo_level(), repo) {
-                if let Err(e) = self.integrate(part, Level::Repo, Some(&repo), bin, r) {
+                if let Err(e) = self.integrate(part, Level::Repo, Some(&repo), bin, r, rebinned) {
                     note(&self.ui, e);
                 }
+            }
+        }
+        if let Some(bin) = &bin {
+            let current = !step_failed.get() && self.sum.gaps.len() == gaps_before;
+            if let Err(e) = self.settle_superseded(part, bin, superseded, current) {
+                note(&self.ui, e);
             }
         }
         // A part whose tool is not on the machine places neither its skills nor
@@ -413,10 +458,12 @@ impl Run<'_> {
 
     /// The part's binary: the receipt's, else one on PATH (adopted), else
     /// fetched and placed.
-    fn binary(&mut self, part: &Part) -> Result<PathBuf, Exit> {
+    fn binary(&mut self, part: &Part) -> Result<FoundBinary, Exit> {
         let Some(name) = part.bin() else {
             return Err(Exit::Failed(format!("{} names no binary", part.name())));
         };
+        let mut replaced = false;
+        let mut superseded: Vec<Superseded> = Vec::new();
         if let Some((path, placed)) = recorded_bin(&self.store.receipt, part) {
             let done = self.store.receipt.entries.iter().any(|e| {
                 part.answers_to(&e.part)
@@ -432,22 +479,27 @@ impl Run<'_> {
                         "{name}: {} (placed by grh, recovered)",
                         promoted.display()
                     ));
-                    return Ok(promoted);
+                    return Ok(FoundBinary {
+                        path: promoted,
+                        replaced: false,
+                        superseded: Vec::new(),
+                    });
                 }
             }
-            if done && path.exists() {
+            let stale = placed && path.file_name().is_some_and(|n| n != name);
+            if done && path.exists() && !stale {
                 let how = if placed { "placed by grh" } else { "adopted" };
                 self.ui
                     .ok(&format!("{name}: {} ({how}, unchanged)", path.display()));
-                return Ok(path);
+                let superseded = self.retire_recorded_binaries(part)?;
+                return Ok(FoundBinary {
+                    path,
+                    replaced: false,
+                    superseded,
+                });
             }
-            self.store.remove_where(|e| {
-                part.answers_to(&e.part)
-                    && matches!(
-                        e.kind,
-                        Kind::BinaryPlaced { .. } | Kind::BinaryAdopted { .. }
-                    )
-            })?;
+            replaced = stale;
+            superseded = self.retire_recorded_binaries(part)?;
         }
         if let Some(found) = dispatch::find(name) {
             let path = absolute(&found);
@@ -458,8 +510,14 @@ impl Run<'_> {
                 },
             ))?;
             self.store.done(idx)?;
+            self.forget_earlier_binary_rows(part, &path, idx)?;
             self.ui.ok(&format!("{name}: adopted {}", path.display()));
-            return Ok(path);
+            superseded.extend(self.remove_stale_alias_copies(part, &path)?);
+            return Ok(FoundBinary {
+                path,
+                replaced,
+                superseded,
+            });
         }
         let Some(release) = part.release() else {
             return Err(Exit::Failed(format!(
@@ -498,9 +556,289 @@ impl Run<'_> {
             keep_binary,
         };
         self.store.done(idx)?;
+        self.forget_earlier_binary_rows(part, &placed.path, idx)?;
         self.ui
             .ok(&format!("{name}: placed {}", placed.path.display()));
-        Ok(placed.path)
+        Ok(FoundBinary {
+            path: placed.path,
+            replaced,
+            superseded,
+        })
+    }
+
+    /// The new binary's row replaces earlier rows at the same path; rows for
+    /// other paths stay until their files are retired.
+    fn forget_earlier_binary_rows(
+        &mut self,
+        part: &Part,
+        path: &Path,
+        new_row: usize,
+    ) -> Result<(), Exit> {
+        let path = path.to_string_lossy();
+        let entries = &mut self.store.receipt.entries;
+        let mut index = 0;
+        entries.retain(|e| {
+            let earlier = index < new_row
+                && part.answers_to(&e.part)
+                && matches!(&e.kind,
+                    Kind::BinaryPlaced { path: p, .. } | Kind::BinaryAdopted { path: p } if **p == *path);
+            index += 1;
+            !earlier
+        });
+        self.store.save()
+    }
+
+    /// The part's binary is one grh did not place: a copy of an earlier grh
+    /// binary under an alias would shadow it on PATH. Return the copies to
+    /// remove once the adopted binary is in use; nothing is deleted here.
+    fn remove_stale_alias_copies(
+        &mut self,
+        part: &Part,
+        bin: &Path,
+    ) -> Result<Vec<Superseded>, Exit> {
+        let adopted = match std::fs::read(bin) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(e) => return Err(Exit::Failed(format!("cannot read {}: {e}", bin.display()))),
+        };
+        let adopted_sha = sha256_hex(&adopted);
+        Ok(self
+            .store
+            .receipt
+            .entries
+            .iter()
+            .filter(|e| part.answers_to(&e.part))
+            .filter_map(|e| match &e.kind {
+                Kind::BinaryAlias { path, sha256 } if *sha256 != adopted_sha => Some(Superseded {
+                    path: path.clone(),
+                    sha256: sha256.clone(),
+                    row: SupersededRow::Alias,
+                }),
+                _ => None,
+            })
+            .collect())
+    }
+
+    /// Delete the superseded files and their rows, only when the new binary
+    /// is in place and every integration of the part is current. Otherwise
+    /// keep both, so a later run can retry, and report the command to run.
+    fn settle_superseded(
+        &mut self,
+        part: &Part,
+        bin: &Path,
+        superseded: Vec<Superseded>,
+        current: bool,
+    ) -> Result<(), Exit> {
+        let bin_path = bin.to_string_lossy().into_owned();
+        let aliases = part.bin_aliases();
+        let leftovers: Vec<Superseded> = superseded
+            .into_iter()
+            .filter(|old| {
+                old.row == SupersededRow::Alias
+                    || (old.path != bin_path
+                        && !Path::new(&old.path)
+                            .file_name()
+                            .is_some_and(|n| aliases.iter().any(|a| n == a.as_str())))
+            })
+            .collect();
+        if leftovers.is_empty() {
+            return Ok(());
+        }
+        if !current {
+            for old in &leftovers {
+                self.sum.gap(
+                    &format!(
+                        "{}: the previous copy is kept until {} installs completely",
+                        old.path,
+                        part.name()
+                    ),
+                    &format!("grh install {}", part.name()),
+                );
+            }
+            return Ok(());
+        }
+        for old in leftovers {
+            let path = old.path;
+            if old.row != SupersededRow::Adopted {
+                self.delete_previous_copy(bin, &path, &old.sha256)?;
+            }
+            self.store.remove_where(|e| {
+                part.answers_to(&e.part)
+                    && match (&e.kind, old.row) {
+                        (Kind::BinaryAlias { path: p, .. }, SupersededRow::Alias) => *p == path,
+                        (
+                            Kind::BinaryPlaced { path: p, .. } | Kind::BinaryAdopted { path: p },
+                            SupersededRow::Binary | SupersededRow::Adopted,
+                        ) => *p == path,
+                        _ => false,
+                    }
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Delete `path` while it still matches the sha256 grh recorded for it;
+    /// report it when it changed since.
+    fn delete_previous_copy(&mut self, bin: &Path, path: &str, recorded: &str) -> Result<(), Exit> {
+        match std::fs::read(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(Exit::Failed(format!("cannot read {path}: {e}"))),
+            Ok(cur) if recorded.is_empty() || sha256_hex(&cur) == recorded => {
+                std::fs::remove_file(path)
+                    .map_err(|e| Exit::Failed(format!("cannot remove {path}: {e}")))?;
+                self.ui.ok(&format!(
+                    "removed the previous copy {path}: it would shadow {}",
+                    bin.display()
+                ));
+                Ok(())
+            }
+            Ok(_) => {
+                self.sum.gap(
+                    &format!("{path}: the previous copy changed since grh placed it, kept"),
+                    "remove it by hand if you no longer want it",
+                );
+                Ok(())
+            }
+        }
+    }
+
+    /// The binaries the receipt records for `part`. A binary grh placed under
+    /// a name the part now declares as an alias stays on record as that
+    /// alias, so the new copy can refresh it. Any other recorded binary is
+    /// returned, with its recorded sha256, for `settle_superseded` to delete
+    /// once its replacement works.
+    fn retire_recorded_binaries(&mut self, part: &Part) -> Result<Vec<Superseded>, Exit> {
+        let recorded: Vec<(String, String, bool)> = self
+            .store
+            .receipt
+            .entries
+            .iter()
+            .filter(|e| part.answers_to(&e.part))
+            .filter_map(|e| match &e.kind {
+                Kind::BinaryPlaced { path, sha256, .. } => {
+                    Some((path.clone(), sha256.clone(), true))
+                }
+                Kind::BinaryAdopted { path } => Some((path.clone(), String::new(), false)),
+                _ => None,
+            })
+            .collect();
+        let mut superseded = Vec::new();
+        for (path, sha256, placed) in recorded {
+            let is_alias = Path::new(&path)
+                .file_name()
+                .is_some_and(|n| part.bin_aliases().iter().any(|a| n == a.as_str()));
+            if placed && is_alias && !sha256.is_empty() {
+                for e in self.store.receipt.entries.iter_mut() {
+                    if part.answers_to(&e.part)
+                        && matches!(&e.kind, Kind::BinaryPlaced { path: p, .. } if *p == path)
+                    {
+                        e.kind = Kind::BinaryAlias {
+                            path: path.clone(),
+                            sha256: sha256.clone(),
+                        };
+                    }
+                }
+            } else {
+                let row = if placed {
+                    SupersededRow::Binary
+                } else {
+                    SupersededRow::Adopted
+                };
+                superseded.push(Superseded { path, sha256, row });
+            }
+        }
+        self.store.save()?;
+        Ok(superseded)
+    }
+
+    /// Place a copy of the placed binary under each alias the part declares,
+    /// beside it. A copy grh placed is refreshed; a file it did not place is
+    /// kept and reported.
+    fn place_aliases(&mut self, part: &Part, bin: &Path) -> Result<(), Exit> {
+        let placed = recorded_bin(&self.store.receipt, part)
+            .is_some_and(|(path, placed)| placed && path == bin);
+        if !placed || part.bin_aliases().is_empty() {
+            return Ok(());
+        }
+        let bytes = std::fs::read(bin)
+            .map_err(|e| Exit::Failed(format!("cannot read {}: {e}", bin.display())))?;
+        let sha256 = sha256_hex(&bytes);
+        let dir = bin.parent().unwrap_or_else(|| Path::new("."));
+        for alias in part.bin_aliases() {
+            let target = dir.join(alias);
+            let path = target.to_string_lossy().into_owned();
+            let old_rows: Vec<usize> = self
+                .store
+                .receipt
+                .entries
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| {
+                    part.answers_to(&e.part)
+                        && matches!(&e.kind, Kind::BinaryAlias { path: p, .. } if *p == path)
+                })
+                .map(|(i, _)| i)
+                .collect();
+            let recorded =
+                old_rows
+                    .iter()
+                    .find_map(|&i| match &self.store.receipt.entries[i].kind {
+                        Kind::BinaryAlias { sha256, .. } => Some(sha256.clone()),
+                        _ => None,
+                    });
+            let current = match std::fs::read(&target) {
+                Ok(cur) => Some(sha256_hex(&cur)),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => return Err(Exit::Failed(format!("cannot read {path}: {e}"))),
+            };
+            match current {
+                Some(cur) if cur == sha256 && recorded.as_deref() == Some(sha256.as_str()) => {
+                    // An install cut between the rename and `done` left the row pending.
+                    if let Some(&row) = old_rows
+                        .iter()
+                        .find(|&&i| self.store.receipt.entries[i].state == State::Pending)
+                    {
+                        self.store.done(row)?;
+                    }
+                    self.ui
+                        .ok(&format!("{alias}: {path} (placed by grh, unchanged)"));
+                    continue;
+                }
+                Some(cur) if cur != sha256 && recorded.as_deref() != Some(cur.as_str()) => {
+                    self.sum.gap(
+                        &format!(
+                            "{alias}: {path} is not grh's, so the {alias} copy was not placed"
+                        ),
+                        &format!("move it away, then grh install {}", part.name()),
+                    );
+                    self.ui
+                        .warn(&format!("{alias}: {path} exists and is not grh's, kept"));
+                    continue;
+                }
+                _ => {}
+            }
+            let idx = self.store.begin(Entry::machine(
+                part.name(),
+                Kind::BinaryAlias {
+                    path: path.clone(),
+                    sha256: sha256.clone(),
+                },
+            ))?;
+            if let Err(e) = write_atomic(&target, &bytes, 0o755) {
+                self.store.receipt.entries.remove(idx);
+                self.store.save()?;
+                return Err(e);
+            }
+            self.store.done(idx)?;
+            // The copy is on disk: drop the rows that recorded other content there.
+            self.store.remove_where(|e| {
+                part.answers_to(&e.part)
+                    && matches!(&e.kind, Kind::BinaryAlias { path: p, sha256: s }
+                        if *p == path && *s != sha256)
+            })?;
+            self.ui.ok(&format!("{alias}: placed {path}"));
+        }
+        Ok(())
     }
 
     /// A pending binary-placed row whose file is in grh's bin dir: the step
@@ -544,6 +882,7 @@ impl Run<'_> {
         repo: Option<&Path>,
         bin: &Path,
         integ: &ToolLevel,
+        rebinned: bool,
     ) -> Result<(), Exit> {
         let which = if level == Level::Machine {
             "machine"
@@ -592,9 +931,27 @@ impl Run<'_> {
                         && e.state == State::Done
                 });
                 if known {
+                    if let Some(idx) = self.stale_tool_install(part, level, repo, bin, integ) {
+                        return self.refresh_integration(part, level, repo, bin, integ, idx);
+                    }
                     self.ui
                         .ok(&format!("{name}: {which} integration present (unchanged)"));
                     return Ok(());
+                }
+                if rebinned {
+                    let adopted = self.store.receipt.entries.iter().any(|e| {
+                        same_scope(e, part, level, repo)
+                            && matches!(e.kind, Kind::ToolInstallAdopted)
+                            && e.state == State::Done
+                    });
+                    if adopted {
+                        self.sum.gap(
+                            &format!(
+                                "{name}: the {which} integration is not grh's and still points at the previous binary; left alone"
+                            ),
+                            &format!("run {}", command_line(&subst(&integ.install, bin))),
+                        );
+                    }
                 }
                 // A step an earlier run left pending, now confirmed present.
                 let pending = self.store.receipt.entries.iter().position(|e| {
@@ -673,6 +1030,77 @@ impl Run<'_> {
                 }
             }
         }
+    }
+
+    /// The index of the grh-owned, done ToolInstall of this scope whose
+    /// recorded install or undo command names a different binary than `bin`.
+    fn stale_tool_install(
+        &self,
+        part: &Part,
+        level: Level,
+        repo: Option<&Path>,
+        bin: &Path,
+        integ: &ToolLevel,
+    ) -> Option<usize> {
+        let differs = |recorded: &[String], template: &[String]| {
+            let current = subst(template, bin);
+            template
+                .iter()
+                .enumerate()
+                .any(|(i, word)| word.contains("{bin}") && recorded.get(i) != current.get(i))
+        };
+        self.store.receipt.entries.iter().position(|e| {
+            same_scope(e, part, level, repo)
+                && e.state == State::Done
+                && matches!(&e.kind, Kind::ToolInstall { argv, undo_argv, .. }
+                    if differs(argv, &integ.install) || differs(undo_argv, &integ.uninstall))
+        })
+    }
+
+    /// Run the install again for the binary now selected, and record its
+    /// arguments, once the tool confirms the integration present.
+    fn refresh_integration(
+        &mut self,
+        part: &Part,
+        level: Level,
+        repo: Option<&Path>,
+        bin: &Path,
+        integ: &ToolLevel,
+        idx: usize,
+    ) -> Result<(), Exit> {
+        let which = if level == Level::Machine {
+            "machine"
+        } else {
+            "repo"
+        };
+        let argv = subst(&integ.install, bin);
+        let code = run_tool(&self.ui, &argv, repo).map_err(Exit::Failed)?;
+        if owner::level_state(integ, bin, repo) != Answer::Present {
+            return Err(Exit::Failed(format!(
+                "{} exited {code} and the {which} integration is not confirmed present",
+                command_line(&argv)
+            )));
+        }
+        let Kind::ToolInstall {
+            argv: recorded,
+            undo_argv,
+            ..
+        } = &mut self.store.receipt.entries[idx].kind
+        else {
+            return Err(Exit::Failed(format!(
+                "{}: the receipt entry to refresh is not a tool install",
+                part.name()
+            )));
+        };
+        *recorded = argv;
+        *undo_argv = subst(&integ.uninstall, bin);
+        self.store.save()?;
+        self.ui.ok(&format!(
+            "{}: {which} integration refreshed for {}",
+            part.name(),
+            bin.display()
+        ));
+        Ok(())
     }
 
     fn place_skills(&mut self, part: &Part) -> Result<(), Exit> {
