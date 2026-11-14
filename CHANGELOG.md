@@ -5,8 +5,11 @@ section is missing here.
 
 ## Unreleased
 
+## v0.6.0
+
 ### Changed
 
+- Pins skills 0.7.0: commands, hook messages and version notes name greenpiste (it was amont-agent until 4.0.0). Run `grh install workflow` once after upgrading.
 - Pins greenpiste 4.0.1 from its shipped manifest (was the catalog's
   amont-agent 3.23.1 entry). The binary is `greenpiste`; the manifest's
   `bin_aliases` has grh place `amont-agent` beside it as a copy, so hook
