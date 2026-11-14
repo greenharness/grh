@@ -32,3 +32,10 @@ grh release as the `bin_aliases` support.
 
 ## Code review
 - grh: backend, lang:rust, unix (lang:python left out: no Python file; platform left out: no workflow changed; tui left out: one recommend string; architect left out: a catalog entry in the existing format)
+
+## Implementation review
+
+- implementation-review: approve-with-changes, then approve ×2 (7dd63768…). Fixed: the uninstall step in the rename test, the duplicate CHANGELOG heading, e2e.sh running greenpiste, the 4.0.1 note, an inline FoundBinary. Deliberate: `settle_superseded`'s `current` flag and a test variable `t` (low).
+- backend: approve-with-changes ×2, then approve. Fixed: alias refresh writes before dropping its row (high); renamed non-alias binary removed; old files deleted only after their successor is in place and every integration is current. Deliberate: two lows (an empty-sha alias-named row kept, a foreign alias file holding the old binary).
+- lang:rust: approve-with-changes ×2, then approve. Fixed: `binary()` returns whether it replaced, let-else, rows dropped by content, an unreadable adopted binary is an error. Deliberate: `Superseded` as one struct with a row tag, and deleting a pending row's file (grh's own unfinished copy).
+- unix: approve-with-changes ×2, then approve. Fixed: a pending alias row recovers; an adopted binary's stale grh copy is removed; nothing is deleted before its replacement works (hooks never name a missing file).
