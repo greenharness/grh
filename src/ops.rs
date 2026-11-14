@@ -272,7 +272,7 @@ pub fn recorded_bin(receipt: &Receipt, part: &Part) -> Option<(PathBuf, bool)> {
     recorded_bin_where(receipt, |recorded| part.answers_to(recorded))
 }
 
-/// The binary the receipt records under a part name `belongs` accepts.
+/// The newest binary the receipt records under a part name `belongs` accepts.
 pub fn recorded_bin_where(
     receipt: &Receipt,
     belongs: impl Fn(&str) -> bool,
@@ -281,6 +281,7 @@ pub fn recorded_bin_where(
         .entries
         .iter()
         .filter(|e| belongs(&e.part) && e.level == Level::Machine)
+        .rev()
         .find_map(|e| match &e.kind {
             Kind::BinaryPlaced { path, .. } => Some((PathBuf::from(path), true)),
             Kind::BinaryAdopted { path } => Some((PathBuf::from(path), false)),

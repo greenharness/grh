@@ -1887,6 +1887,52 @@ fn a_placed_binary_of_another_name_is_replaced_and_its_integration_refreshed_onc
     assert!(fx.files("bin").is_empty(), "{:?}", fx.files("bin"));
 }
 
+#[test]
+fn the_previous_binary_and_its_row_survive_a_failed_fetch_and_go_after_a_later_install() {
+    let fx = bin_alias_fx();
+    let old = seed_renamed_binary(&fx, "tool-install");
+    let t = target().unwrap();
+    let tarball = fx.p(&format!(
+        "rel/fredericrous/amont-agent/releases/download/v1.0.0/amont-agent-1.0.0-{t}.tar.gz"
+    ));
+    let saved = fs::read(&tarball).unwrap();
+    fs::remove_file(&tarball).unwrap();
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_ne!(code(&output), 0, "{}", err(&output));
+    assert!(old.exists(), "the old binary is kept when the fetch fails");
+    assert!(
+        fx.receipt().contains(&*old.to_string_lossy()),
+        "{}",
+        fx.receipt()
+    );
+    put(&tarball, &saved);
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(!old.exists(), "removed once the new binary is in place");
+    assert!(!fx.receipt().contains(&*old.to_string_lossy()));
+}
+
+#[test]
+fn the_previous_binary_and_its_row_survive_a_refresh_that_cannot_be_checked() {
+    let fx = bin_alias_fx();
+    let old = seed_renamed_binary(&fx, "tool-install");
+    let output = fx.grh(
+        "work",
+        &[("FAKE_UNKNOWN", "amont-agent")],
+        &["install", "guardrails", "--yes"],
+    );
+    assert!(old.exists(), "{}", err(&output));
+    assert!(
+        fx.receipt().contains(&*old.to_string_lossy()),
+        "{}",
+        fx.receipt()
+    );
+    let output = fx.grh("work", &[], &["install", "guardrails", "--yes"]);
+    assert_eq!(code(&output), 0, "{}", err(&output));
+    assert!(!old.exists(), "{}", err(&output));
+    assert!(!fx.receipt().contains(&*old.to_string_lossy()));
+}
+
 fn receipt_rows(fx: &Fx, kind: &str) -> Vec<serde_json::Value> {
     let doc: serde_json::Value = serde_json::from_str(&fx.receipt()).unwrap();
     doc["entries"]
