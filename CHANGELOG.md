@@ -5,6 +5,15 @@ section is missing here.
 
 ## Unreleased
 
+### Changed
+
+- Pins greenpiste 4.0.1 from its shipped manifest (was the catalog's
+  amont-agent 3.23.1 entry). The binary is `greenpiste`; the manifest's
+  `bin_aliases` has grh place `amont-agent` beside it as a copy, so hook
+  entries written for the old name keep firing. On a machine where grh placed
+  `amont-agent` before, `grh install greenpiste` fetches greenpiste, refreshes
+  the hook integration to the new path and rewrites its recorded undo.
+
 ### Added
 
 - A manifest may declare `[tool] bin_aliases`: grh places a byte-identical copy

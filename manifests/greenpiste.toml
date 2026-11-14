@@ -1,0 +1,50 @@
+# greenpiste's manifest for grh (Green Harness), the v2 format of grh's
+# docs/extension-manifest.md. grh pins the copy each release publishes.
+#
+# No sums here, and no [tool.release]: the tarballs this would describe do
+# not exist when the file is committed. The release job writes
+# [tool.release] (repo, version, the sha256 of each unix tarball) into a copy
+# in dist/ before SHA256SUMS is computed (scripts/release-manifest.py).
+# The release guard checks [extension] version against the tag.
+
+[extension]
+name = "greenpiste"
+version = "4.0.1"
+harness = ">=0.3"
+summary = "what an agent's tool call may do: a Claude Code hook"
+needs = []
+aliases = ["guardrails"]
+
+# `amont-agent` is the old name, kept as a copy beside the binary until the
+# programme's census finds no program still calling it.
+[tool]
+bin = "greenpiste"
+bin_aliases = ["amont-agent"]
+
+[tool.machine]
+install = ["{bin}", "install", "--write"]
+uninstall = ["{bin}", "uninstall", "--write"]
+requires = ["claude"]
+[tool.machine.status]
+args = ["doctor", "--json"]
+json = ["integration", "state"]
+
+[[recommend]]
+when = ["machine_present"]
+verdict = "already here"
+reason = "greenpiste's integration is installed"
+
+[[recommend]]
+when = []
+verdict = "recommend"
+reason = "a git repository: keep agents inside the rules"
+
+# Written by scripts/release-manifest.py from the release's own tarballs.
+[tool.release]
+repo = "greenharness/greenpiste"
+version = "4.0.1"
+[tool.release.sha256]
+aarch64-apple-darwin = "ce92ac143f8b78baf978b304c5d87a859b8909894d6055e5b4e723ea77d66447"
+x86_64-apple-darwin = "2b5816c27cf649cf20cc88a361328dc837adfff5cc668d62c00e746881e4bc15"
+aarch64-unknown-linux-gnu = "24a6d626640407a351ac7feb35d8a67d4d22ee201800a24414f5cf1306c7427d"
+x86_64-unknown-linux-gnu = "29ef9095edb8dc864e7abe04e85546102bfdf3bbcea5ebbba9e0109bf5524466"
