@@ -16,5 +16,19 @@ undo arguments rewritten. The catalog's greenpiste `[[part]]` becomes a
 `[[pinned]]` entry for greenpiste 4.0.0 once that release exists, in the same
 grh release as the `bin_aliases` support.
 
+## Notes
+
+- Pinned at **v4.0.1**, not 4.0.0: 4.0.0's release reached GitHub and
+  crates.io but its tap job failed (greenpiste#256), so 4.0.1 is the first
+  release Homebrew offers and the one this pin names.
+- `scripts/e2e.sh` now copies and runs `greenpiste` (the adopted-tool case
+  installs and uninstalls through it); its one remaining `amont-agent` is the
+  `~/.claude/amont-agent/` data directory greenpiste still writes (plan 3b-2).
+- Observed before the push: `cargo test --locked` passes (the audit golden's
+  stub renamed to `greenpiste`, its reason text from the shipped manifest);
+  `cargo run --example pins -- pin greenpiste greenharness/greenpiste v4.0.1`
+  wrote `manifests/greenpiste.toml` and the pin's sha256. CI's `e2e.sh` is the
+  run against the real 4.0.1 release.
+
 ## Code review
 - grh: backend, lang:rust, unix (lang:python left out: no Python file; platform left out: no workflow changed; tui left out: one recommend string; architect left out: a catalog entry in the existing format)
