@@ -5,6 +5,10 @@ section is missing here.
 
 ## Unreleased
 
+## v0.6.2
+
+- Pins skills 0.9.0: plan-review names the plan id that greenpiste 4.3.0 writes into each plan, reads the `counts=` field on its first line, and carries the counts on the 📍 line; worktree-task copies `plan-id:` into the landed plan. Run `grh install workflow` once after upgrading.
+
 ## v0.6.1
 
 - Pins skills 0.8.0: the plan panel's backend seat asks which phases and safeguards to remove or merge, and a review round that grows the plan past ×1.25 turns its additions into one decision for the person. Run `grh install workflow` once after upgrading.
