@@ -5,6 +5,10 @@ section is missing here.
 
 ## Unreleased
 
+## v0.6.1
+
+- Pins skills 0.8.0: the plan panel's backend seat asks which phases and safeguards to remove or merge, and a review round that grows the plan past ×1.25 turns its additions into one decision for the person. Run `grh install workflow` once after upgrading.
+
 ## v0.6.0
 
 ### Changed
