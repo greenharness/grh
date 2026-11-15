@@ -5,6 +5,11 @@ section is missing here.
 
 ## Unreleased
 
+## v0.7.0
+
+- Pins greenpiste 5.0.0: it writes only its own data names (`~/.claude/greenpiste`, `GREENPISTE_*` variables, `greenpiste.*` git keys, `clear-relay@greenpiste`) and migrates a machine once, the first time any command runs after the upgrade, without ever blocking a hook. `greenpiste migrate --dry-run` says what it would do and `greenpiste migrate --reverse` undoes it. Claude Code's own plugin registry is not migrated yet: if `claude plugin list` still shows `clear-relay@amont-agent`, run `claude plugin marketplace add ~/.local/state/greenpiste/claude-marketplace` and `claude plugin install clear-relay@greenpiste`, or `greenpiste install --write` after that.
+- Pins skills 0.10.0: worktree-task, plan-review, retro and browser-check name `~/.claude/greenpiste`, `GREENPISTE_PLAN_ROOT` and the `greenpiste.*` git keys. Run `grh install workflow` once after upgrading.
+
 ## v0.6.2
 
 - Pins skills 0.9.0: plan-review names the plan id that greenpiste 4.3.0 writes into each plan, reads the `counts=` field on its first line, and carries the counts on the 📍 line; worktree-task copies `plan-id:` into the landed plan. Run `grh install workflow` once after upgrading.

@@ -6,7 +6,7 @@
 #   scripts/e2e.sh <path to the built grh binary>
 #
 # Everything happens under a scratch HOME. The tool state dirs the parts keep
-# after their own uninstall (relais's state, greenpiste's journal under ~/.claude/amont-agent/) are the
+# after their own uninstall (relais's state, greenpiste's journal under ~/.claude/greenpiste/) are the
 # only leftovers allowed.
 set -eu
 
@@ -149,7 +149,7 @@ step "HOME is as it was, apart from grh and the tools' own state"
 (cd "$HOME" && find . -type f | sort) > "$scratch/after.txt"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
-              -e '^\./\.claude/amont-agent/' -e '^\./\.local/bin/grh$' \
+              -e '^\./\.claude/greenpiste/' -e '^\./\.local/bin/grh$' \
               -e '^\./\.config/greengate/greengate-migrat' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
 # greengate 4.0 records once per machine that its 3.x names were migrated
