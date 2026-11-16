@@ -11,7 +11,7 @@ use std::path::Path;
 /// managers a manifest's conflicts name). Compared lowercased.
 const PARTS: &[&str] = &[
     "greengate",
-    "greenpiste",
+    "greenbelay",
     "gate",
     "guardrails",
     "decisions",

@@ -5,6 +5,16 @@ section is missing here.
 
 ## Unreleased
 
+## v0.8.0
+
+- **greenpiste is now greenbelay** (ADR-0071). The part is named
+  `greenbelay` (`grh install greenbelay`; `guardrails` still answers), and
+  grh pins greenbelay 6.0.0, which installs one binary: no `greenpiste` or
+  `amont-agent` copy. A receipt naming the part greenpiste is not matched:
+  machines that had it are switched once outside grh.
+- Pins skills 0.12.0: the skills name greenbelay's commands, paths, keys and
+  environment variables, with the greenpiste version gates removed.
+
 ## v0.7.2
 
 - Pins greenpiste 5.1.0: a plan's `### 🧑 Your steps` block under `## Phases` lists the actions only the person can run, and `plan-panel` counts them as `steps:N` (after `words`, before `merge-candidates`).

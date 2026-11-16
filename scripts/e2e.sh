@@ -6,7 +6,7 @@
 #   scripts/e2e.sh <path to the built grh binary>
 #
 # Everything happens under a scratch HOME. The tool state dirs the parts keep
-# after their own uninstall (relais's state, greenpiste's journal under ~/.claude/greenpiste/) are the
+# after their own uninstall (relais's state, greenbelay's journal under ~/.claude/greenbelay/) are the
 # only leftovers allowed.
 set -eu
 
@@ -93,7 +93,7 @@ grep -q '^mcp add' "$CLAUDE_FAKE_LOG" || { echo "no claude mcp add was recorded"
 # Keep the parts' binaries for the adopted cases below.
 tools="$scratch/tools"
 mkdir -p "$tools"
-cp "$GRH_BIN_DIR/greengate" "$GRH_BIN_DIR/greenpiste" "$tools/"
+cp "$GRH_BIN_DIR/greengate" "$GRH_BIN_DIR/greenbelay" "$tools/"
 
 step "grh status --json is one JSON document"
 grh status --json > "$scratch/status.json"
@@ -101,7 +101,7 @@ grh status --json > "$scratch/status.json"
 python3 - "$scratch/status.json" <<'PY'
 import json, sys
 parts = json.load(open(sys.argv[1]))["parts"]
-want = {"decisions", "greengate", "greenpiste", "conform"}
+want = {"decisions", "greengate", "greenbelay", "conform"}
 if any(p["name"] == "router" and p["installed"] for p in parts):
     sys.exit("router (an experiment) was installed by --all")
 bad = [p["name"] for p in parts if p["name"] in want and not (p["installed"] and p["source"] == "placed")]
@@ -149,15 +149,15 @@ step "HOME is as it was, apart from grh and the tools' own state"
 (cd "$HOME" && find . -type f | sort) > "$scratch/after.txt"
 leftover=$(comm -13 "$before" "$scratch/after.txt" \
     | grep -v -e '^\./\.local/state/grh/' -e '^\./\.local/state/relais/' \
-              -e '^\./\.claude/greenpiste/' -e '^\./\.local/bin/grh$' \
+              -e '^\./\.claude/greenbelay/' -e '^\./\.local/bin/grh$' \
               -e '^\./\.config/greengate/greengate-migrat' \
               -e '^\./\.cache/' -e '^\./Library/Caches/' || true)
 # greengate 4.0 records once per machine that its 3.x names were migrated
 # (`greengate-migrated`, and the flock beside it): machine state, kept on
 # purpose across an uninstall so a reinstall does not migrate again.
-# greenpiste's own uninstall leaves the settings.json its install created,
+# greenbelay's own uninstall leaves the settings.json its install created,
 # emptied to `{}`. Allowed only while empty.
-# holds-until: greenpiste's `uninstall --write` removes a settings.json it
+# holds-until: greenbelay's `uninstall --write` removes a settings.json it
 # created and left empty (follow-up after amont-agent 3.9.0).
 if [ "$(cat "$CLAUDE_CONFIG_DIR/settings.json" 2> /dev/null)" = "{}" ]; then
     leftover=$(printf '%s\n' "$leftover" | grep -v '^\./\.claude/settings\.json$' || true)
@@ -170,12 +170,12 @@ fi
 echo "nothing left behind"
 
 step "an integration that was there first survives uninstall"
-"$tools/greenpiste" install --write
-grep -q 'greenpiste' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "greenpiste wrote no hook entry"; exit 1; }
-grh install greenpiste --yes
+"$tools/greenbelay" install --write
+grep -q 'greenbelay' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "greenbelay wrote no hook entry"; exit 1; }
+grh install greenbelay --yes
 grh uninstall --yes
-grep -q 'greenpiste' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
-"$tools/greenpiste" uninstall --write
+grep -q 'greenbelay' "$CLAUDE_CONFIG_DIR/settings.json" || { echo "uninstall removed an adopted hook entry"; exit 1; }
+"$tools/greenbelay" uninstall --write
 
 step "a binary that was there first survives uninstall"
 other="$scratch/other"

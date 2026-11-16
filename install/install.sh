@@ -136,7 +136,7 @@ main() {
     printf '  Nothing else is installed yet. Next:\n\n'
     printf '    grh audit                          # what fits this repository\n'
     printf '    grh install                        # pick the parts in a checklist\n'
-    printf '    grh install greengate greenpiste   # or name them\n\n'
+    printf '    grh install greengate greenbelay   # or name them\n\n'
 }
 
 main "$@"

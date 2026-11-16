@@ -933,7 +933,7 @@ mod tests {
             }
         }
         assert_eq!(catalog.part("gate").unwrap().name(), "greengate");
-        assert_eq!(catalog.part("guardrails").unwrap().name(), "greenpiste");
+        assert_eq!(catalog.part("guardrails").unwrap().name(), "greenbelay");
     }
 
     #[test]
@@ -1025,13 +1025,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             notice,
-            "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenpiste\n  or every part but the experiments: grh install --all"
+            "profiles were removed in 0.3.0.\n  to install what solo installed: grh install greengate greenbelay\n  or every part but the experiments: grh install --all"
         );
         let notice = catalog
             .retired_notice(&args(&["greengate", "solo"]), Verb::Uninstall)
             .unwrap();
         assert!(
-            notice.ends_with("to remove what solo installed: grh uninstall greengate greenpiste")
+            notice.ends_with("to remove what solo installed: grh uninstall greengate greenbelay")
         );
         assert!(catalog
             .retired_notice(&args(&["greengate"]), Verb::Install)
@@ -1059,7 +1059,7 @@ mod tests {
         );
         assert_eq!(
             names(&catalog.resolve(&args(&["workflow"])).unwrap()),
-            ["greengate", "greenpiste", "workflow"]
+            ["greengate", "greenbelay", "workflow"]
         );
     }
 

@@ -1098,7 +1098,7 @@ fn audit_of_a_rust_repo_with_husky_recommends_the_gates_and_warns() {
     put(&fx.p("work/src/main.rs"), b"fn main() {}\n");
     put(&fx.p("work/.husky/pre-commit"), b"#!/bin/sh\n");
     let (install, warnings) = audit_install(&fx);
-    assert_eq!(install.as_deref(), Some("grh install greengate greenpiste"));
+    assert_eq!(install.as_deref(), Some("grh install greengate greenbelay"));
     assert!(warnings.iter().any(|w| w.contains("husky")), "{warnings:?}");
 }
 
@@ -1111,7 +1111,7 @@ fn audit_of_a_typescript_repo_with_adrs_recommends_decisions_and_conform() {
     let (install, _) = audit_install(&fx);
     assert_eq!(
         install.as_deref(),
-        Some("grh install greengate greenpiste decisions conform")
+        Some("grh install greengate greenbelay decisions conform")
     );
 }
 
@@ -1657,7 +1657,7 @@ fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
         names,
         [
             "greengate",
-            "greenpiste",
+            "greenbelay",
             "decisions",
             "conform",
             "router",
@@ -1667,7 +1667,7 @@ fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
         ]
     );
     assert_eq!(rows[0].1, "already here", "{rows:?}");
-    assert_eq!(v["install"], "grh install greenpiste");
+    assert_eq!(v["install"], "grh install greenbelay");
 }
 
 #[test]
