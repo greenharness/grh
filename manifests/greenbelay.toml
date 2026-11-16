@@ -1,4 +1,4 @@
-# greenpiste's manifest for grh (Green Harness), the v2 format of grh's
+# greenbelay's manifest for grh (Green Harness), the v2 format of grh's
 # docs/extension-manifest.md. grh pins the copy each release publishes.
 #
 # No sums here, and no [tool.release]: the tarballs this would describe do
@@ -8,18 +8,16 @@
 # The release guard checks [extension] version against the tag.
 
 [extension]
-name = "greenpiste"
-version = "5.1.0"
+name = "greenbelay"
+version = "6.0.0"
 harness = ">=0.3"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
 aliases = ["guardrails"]
 
-# `amont-agent` is the old name, kept as a copy beside the binary until the
-# programme's census finds no program still calling it.
+# One name, no alias binary (ADR-0071).
 [tool]
-bin = "greenpiste"
-bin_aliases = ["amont-agent"]
+bin = "greenbelay"
 
 [tool.machine]
 install = ["{bin}", "install", "--write"]
@@ -32,7 +30,7 @@ json = ["integration", "state"]
 [[recommend]]
 when = ["machine_present"]
 verdict = "already here"
-reason = "greenpiste's integration is installed"
+reason = "greenbelay's integration is installed"
 
 [[recommend]]
 when = []
@@ -41,10 +39,10 @@ reason = "a git repository: keep agents inside the rules"
 
 # Written by scripts/release-manifest.py from the release's own tarballs.
 [tool.release]
-repo = "greenharness/greenpiste"
-version = "5.1.0"
+repo = "greenharness/greenbelay"
+version = "6.0.0"
 [tool.release.sha256]
-aarch64-apple-darwin = "f2291015114714bec03190e20b7399d5c2c7f0df27ea5ff7beba730f70c49d9f"
-x86_64-apple-darwin = "96cc1645fa1acd8ec0682bc12ab97475fd920d020b1d14336198c7062e3ccd41"
-aarch64-unknown-linux-gnu = "ce2f686317624ae75aaa1034e309a81b30c8ee0e999f3dbf1dfb2ba180d21250"
-x86_64-unknown-linux-gnu = "cad43471f4b7ff7f28b56e49373b6ae4658beb8525708ce4c2d365141f5e1512"
+aarch64-apple-darwin = "e3b881157531c55d4c0e4c315afd4f7162ca083afc513f87674d6ad49c5c76bd"
+x86_64-apple-darwin = "494b62890bfba6d5ff8e2f3be5b627805509af130ddfeb3f07c897e7bf3deb48"
+aarch64-unknown-linux-gnu = "8517e6b7aef9b798b0b2b74e5847ed8a5099fa45a613c8c9324dd6642a26da8e"
+x86_64-unknown-linux-gnu = "9139f56c4401273d982815ef66b909e60cfb85892230816781a45f2be2114dda"

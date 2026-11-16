@@ -12,7 +12,7 @@ rows() { # binary dir
   (cd "$2" && "$1" audit --json 2>/dev/null) |
     python3 -c '
 import json,sys
-m={"gate":"greengate","guardrails":"greenpiste"}
+m={"gate":"greengate","guardrails":"greenbelay"}
 d=json.load(sys.stdin)
 for r in d["parts"]: print(m.get(r["part"],r["part"]), r["verdict"])' | sort
 }

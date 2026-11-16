@@ -1,19 +1,19 @@
 {
   "adr_no_language": {
     "hooks": [],
-    "install": "grh install greengate greenpiste decisions"
+    "install": "grh install greengate greenbelay decisions"
   },
   "aval_mcp_registered": {
     "hooks": [],
-    "install": "grh install greengate greenpiste conform"
+    "install": "grh install greengate greenbelay conform"
   },
   "ci_attest": {
     "hooks": [],
-    "install": "grh install greengate greenpiste"
+    "install": "grh install greengate greenbelay"
   },
   "ci_present": {
     "hooks": [],
-    "install": "grh install greengate greenpiste attest"
+    "install": "grh install greengate greenbelay attest"
   },
   "claude_installed": {
     "hooks": [],
@@ -21,45 +21,45 @@
   },
   "claude_setup": {
     "hooks": [],
-    "install": "grh install greengate greenpiste workflow"
+    "install": "grh install greengate greenbelay workflow"
   },
   "duro": {
     "hooks": [],
-    "install": "grh install greengate greenpiste design"
+    "install": "grh install greengate greenbelay design"
   },
   "empty": {
     "hooks": [],
-    "install": "grh install greengate greenpiste"
+    "install": "grh install greengate greenbelay"
   },
   "gate_installed": {
     "hooks": [
       "greengate"
     ],
-    "install": "grh install greenpiste"
+    "install": "grh install greenbelay"
   },
   "hooks_path": {
     "hooks": [
       "core.hooksPath=.githooks",
       "hook pre-push"
     ],
-    "install": "grh install greengate greenpiste"
+    "install": "grh install greengate greenbelay"
   },
   "managers_all": {
     "hooks": [
       "lefthook",
       "pre-commit (.pre-commit-config.yaml)"
     ],
-    "install": "grh install greengate greenpiste"
+    "install": "grh install greengate greenbelay"
   },
   "rust_husky": {
     "hooks": [
       "husky (.husky/)",
       "hook pre-commit"
     ],
-    "install": "grh install greengate greenpiste"
+    "install": "grh install greengate greenbelay"
   },
   "ts_adrs": {
     "hooks": [],
-    "install": "grh install greengate greenpiste decisions conform"
+    "install": "grh install greengate greenbelay decisions conform"
   }
 }

@@ -23,18 +23,18 @@
 # `enhances` edge points to an earlier entry; Catalog::checked refuses the rest.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.11.0"
-skills_sha256 = "1db1c904b1af5469359898f6c2f4bd04415dee5bae1a1af0bcd5e783ae650dc4"
+skills_version = "0.12.0"
+skills_sha256 = "81f9a0842efead1e827682616e6a7bd779a2004490ae7e48184337a9258de1ac"
 foreign_markers = ["relais:begin"]
-order = ["decisions", "greengate", "greenpiste", "router", "conform", "attest", "workflow", "design"]
+order = ["decisions", "greengate", "greenbelay", "router", "conform", "attest", "workflow", "design"]
 
 # Names that installed several parts before 0.3.0, with their former members.
 # grh refuses them with a hint (Catalog::checked: no part name or alias, and
 # every member a published part).
 [retired_names]
-solo = ["greengate", "greenpiste"]
-team = ["greengate", "greenpiste", "decisions", "conform"]
-full = ["greengate", "greenpiste", "decisions", "conform", "router"]
+solo = ["greengate", "greenbelay"]
+team = ["greengate", "greenbelay", "decisions", "conform"]
+full = ["greengate", "greenbelay", "decisions", "conform", "router"]
 
 [audit]
 adr_folder = [".adr.yaml", "docs/adr", "docs/decisions", "doc/adr"]
@@ -48,10 +48,10 @@ tag = "v4.0.0"
 sha256 = "399ad2fd9cabce5fad1fad990ae60c21cd0f55bb5da9083d25ae797e19739dae"
 
 [[pinned]]
-name = "greenpiste"
-repo = "greenharness/greenpiste"
-tag = "v5.1.0"
-sha256 = "755a354155919e17f0e5af25afa8840a68de84d0e77984143c4f6c8539cfecdc"
+name = "greenbelay"
+repo = "greenharness/greenbelay"
+tag = "v6.0.0"
+sha256 = "8574587879528db99f4aedf589c6ad1001f8f7b33008e37cf00b27b78072fb7b"
 
 [[part]]
 [part.extension]
@@ -227,7 +227,7 @@ name = "workflow"
 version = "0.1.0"
 harness = ">=0.3"
 summary = "plans reviewed by a panel, one worktree per task, merge on green"
-needs = ["greengate", "greenpiste"]
+needs = ["greengate", "greenbelay"]
 
 [part.bundle]
 skills = [
