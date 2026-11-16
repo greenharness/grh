@@ -5,6 +5,10 @@ section is missing here.
 
 ## Unreleased
 
+## v0.7.1
+
+- Pins greenpiste 5.0.1: after the 5.0.0 migration `migrate`, `install` and `doctor` name the `claude plugin` commands that bring Claude Code's own plugin registry onto `clear-relay@greenpiste` (greenpiste never writes the registry or runs `claude`), and `doctor` reports a stale registry as a failing finding.
+
 ## v0.7.0
 
 - Pins greenpiste 5.0.0: it writes only its own data names (`~/.claude/greenpiste`, `GREENPISTE_*` variables, `greenpiste.*` git keys, `clear-relay@greenpiste`) and migrates a machine once, the first time any command runs after the upgrade, without ever blocking a hook. `greenpiste migrate --dry-run` says what it would do and `greenpiste migrate --reverse` undoes it. Claude Code's own plugin registry is not migrated yet: if `claude plugin list` still shows `clear-relay@amont-agent`, run `claude plugin marketplace add ~/.local/state/greenpiste/claude-marketplace` and `claude plugin install clear-relay@greenpiste`, or `greenpiste install --write` after that.
