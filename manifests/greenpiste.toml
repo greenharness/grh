@@ -9,7 +9,7 @@
 
 [extension]
 name = "greenpiste"
-version = "5.0.1"
+version = "5.1.0"
 harness = ">=0.3"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
@@ -42,9 +42,9 @@ reason = "a git repository: keep agents inside the rules"
 # Written by scripts/release-manifest.py from the release's own tarballs.
 [tool.release]
 repo = "greenharness/greenpiste"
-version = "5.0.1"
+version = "5.1.0"
 [tool.release.sha256]
-aarch64-apple-darwin = "ea9b25696397012baeb91909a6545071008915a02887491b1936bfab662dc2b7"
-x86_64-apple-darwin = "419e0b19092e37d112054210266f1271db2df3a9dc6eebef549c314efee54c9a"
-aarch64-unknown-linux-gnu = "a6bc2cf281ef4fcd9b8101aa90459fa127e4665d32d55e48d9c7d7094cc507ce"
-x86_64-unknown-linux-gnu = "8a45b4ba358c563da165d3e122829d902fc0b5e5bb126fe1797e767707f4f209"
+aarch64-apple-darwin = "f2291015114714bec03190e20b7399d5c2c7f0df27ea5ff7beba730f70c49d9f"
+x86_64-apple-darwin = "96cc1645fa1acd8ec0682bc12ab97475fd920d020b1d14336198c7062e3ccd41"
+aarch64-unknown-linux-gnu = "ce2f686317624ae75aaa1034e309a81b30c8ee0e999f3dbf1dfb2ba180d21250"
+x86_64-unknown-linux-gnu = "cad43471f4b7ff7f28b56e49373b6ae4658beb8525708ce4c2d365141f5e1512"

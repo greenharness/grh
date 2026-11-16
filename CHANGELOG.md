@@ -5,6 +5,11 @@ section is missing here.
 
 ## Unreleased
 
+## v0.7.2
+
+- Pins greenpiste 5.1.0: a plan's `### 🧑 Your steps` block under `## Phases` lists the actions only the person can run, and `plan-panel` counts them as `steps:N` (after `words`, before `merge-candidates`).
+- Pins skills 0.11.0: the plan template carries the `🧑 Your steps` block, `worktree-task`'s finish ends its report with those steps, and `plan-review` reads `steps:` apart from `person:`.
+
 ## v0.7.1
 
 - Pins greenpiste 5.0.1: after the 5.0.0 migration `migrate`, `install` and `doctor` name the `claude plugin` commands that bring Claude Code's own plugin registry onto `clear-relay@greenpiste` (greenpiste never writes the registry or runs `claude`), and `doctor` reports a stale registry as a failing finding.
