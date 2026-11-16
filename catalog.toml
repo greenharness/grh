@@ -50,8 +50,8 @@ sha256 = "399ad2fd9cabce5fad1fad990ae60c21cd0f55bb5da9083d25ae797e19739dae"
 [[pinned]]
 name = "greenpiste"
 repo = "greenharness/greenpiste"
-tag = "v5.0.0"
-sha256 = "8b33de254f560586a001b0fd4a64bb40fca9afbf8dd0fbdf6c241d4dc2208991"
+tag = "v5.0.1"
+sha256 = "c240dd276a7fc6c5f237d6434bf28054343e44b175c5f67aa1c62950deb1af9d"
 
 [[part]]
 [part.extension]
