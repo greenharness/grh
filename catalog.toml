@@ -44,14 +44,14 @@ ci_present = [".github/workflows", ".forgejo/workflows"]
 [[pinned]]
 name = "greengate"
 repo = "greenharness/greengate"
-tag = "v4.0.0"
-sha256 = "399ad2fd9cabce5fad1fad990ae60c21cd0f55bb5da9083d25ae797e19739dae"
+tag = "v4.10.0"
+sha256 = "694d40b987e0e90471a10f6eec5c924925214d4a40b3271e7cd7e5587561d14e"
 
 [[pinned]]
 name = "greenbelay"
 repo = "greenharness/greenbelay"
-tag = "v6.0.0"
-sha256 = "8574587879528db99f4aedf589c6ad1001f8f7b33008e37cf00b27b78072fb7b"
+tag = "v6.1.0"
+sha256 = "60fdcf743435ca919da3ad30922ca75666a64ddad221beced531a341418ca37b"
 
 [[part]]
 [part.extension]
