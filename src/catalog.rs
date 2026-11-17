@@ -1047,6 +1047,21 @@ mod tests {
     }
 
     #[test]
+    fn attest_is_an_alias_of_greensummit_whose_workflow_uses_v2() {
+        let catalog = Catalog::load().unwrap();
+        assert_eq!(
+            catalog.alias_notice("attest", Verb::Install).as_deref(),
+            Some("attest is now greensummit: run grh install greensummit")
+        );
+        let part = catalog.part("attest").unwrap();
+        assert_eq!(part.name(), "greensummit");
+        assert_eq!(part.repo_file.len(), 1);
+        assert!(part.repo_file[0]
+            .content
+            .contains("uses: greenharness/greensummit@v2\n"));
+    }
+
+    #[test]
     fn dependencies_are_added_before_what_needs_them() {
         let catalog = Catalog::load().unwrap();
         assert_eq!(
@@ -1054,8 +1069,12 @@ mod tests {
             ["decisions", "conform"]
         );
         assert_eq!(
+            names(&catalog.resolve(&args(&["greensummit"])).unwrap()),
+            ["greengate", "greensummit"]
+        );
+        assert_eq!(
             names(&catalog.resolve(&args(&["attest"])).unwrap()),
-            ["greengate", "attest"]
+            ["greengate", "greensummit"]
         );
         assert_eq!(
             names(&catalog.resolve(&args(&["workflow"])).unwrap()),

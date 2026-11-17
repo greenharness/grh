@@ -9,7 +9,7 @@
 
 [extension]
 name = "greenbelay"
-version = "6.1.0"
+version = "6.2.0"
 harness = ">=0.3"
 summary = "what an agent's tool call may do: a Claude Code hook"
 needs = []
@@ -40,9 +40,9 @@ reason = "a git repository: keep agents inside the rules"
 # Written by scripts/release-manifest.py from the release's own tarballs.
 [tool.release]
 repo = "greenharness/greenbelay"
-version = "6.1.0"
+version = "6.2.0"
 [tool.release.sha256]
-aarch64-apple-darwin = "5fefbe6ceeac9db6ad166eab1c77872394a34c175cf2230f18292beb192acc69"
-x86_64-apple-darwin = "fe1e2c52bb25d0fe3362d31a0a0d97be0554c870bad95fd55aca8ba2e6bc218d"
-aarch64-unknown-linux-gnu = "32b33b03fcb82ff72e666b3a982238b94b15f124c393f45c5bd5edfc79342ce3"
-x86_64-unknown-linux-gnu = "a88b912cd3c8bd354590c80d2c059bdf43c98569e98799861dd5081e8d103c4c"
+aarch64-apple-darwin = "27026b8c9a09b1fb24d4d734e80a6f09b417552063ac7a2f422efd9b2c3119cd"
+x86_64-apple-darwin = "9032365d301bad6dd733dc40e989366f11c142ef7a288b733011cfbbbbe2e09c"
+aarch64-unknown-linux-gnu = "67e88ce51744edbcbbdf3992b835f494832a656baac2b87e612eb9bc295e30da"
+x86_64-unknown-linux-gnu = "bea8f94c9a769125859e43ceceac0c2133bf6c638511cdda4a9d92cbd9dca502"

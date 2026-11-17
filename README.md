@@ -30,7 +30,7 @@ lists the parts and exits 2.
 | greenbelay (was greenpiste, guardrails) | greenbelay | what an agent's tool call may do: a Claude Code hook |
 | router | relais | which model runs a bounded task, verified and accounted (an experiment: never ticked for you, left out of `--all`) |
 | conform | adr-lint | which decided code rules a tree breaks, by lint (needs decisions) |
-| attest | git-attest | CI skips what your laptop already checked (needs greengate) |
+| greensummit (was attest) | greensummit | CI skips what your laptop already checked (needs greengate) |
 | workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs greenbelay and greengate) |
 | design | Duro | the Duro design system, themed by your tokens (extension, not published yet) |
 

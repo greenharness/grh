@@ -26,7 +26,7 @@ skills_repo = "greenharness/skills"
 skills_version = "0.13.0"
 skills_sha256 = "873225b5bd65e9eb11ef7d7236022bce825f7326bcf4b538f95869953cb1fdc1"
 foreign_markers = ["relais:begin"]
-order = ["decisions", "greengate", "greenbelay", "router", "conform", "attest", "workflow", "design"]
+order = ["decisions", "greengate", "greenbelay", "router", "conform", "greensummit", "workflow", "design"]
 
 # Names that installed several parts before 0.3.0, with their former members.
 # grh refuses them with a hint (Catalog::checked: no part name or alias, and
@@ -44,14 +44,14 @@ ci_present = [".github/workflows", ".forgejo/workflows"]
 [[pinned]]
 name = "greengate"
 repo = "greenharness/greengate"
-tag = "v4.10.0"
-sha256 = "694d40b987e0e90471a10f6eec5c924925214d4a40b3271e7cd7e5587561d14e"
+tag = "v4.11.0"
+sha256 = "99589f84c3b17e4dba92dd1e0bd04fa8cc193473656c522c102987cf10b2b041"
 
 [[pinned]]
 name = "greenbelay"
 repo = "greenharness/greenbelay"
-tag = "v6.1.0"
-sha256 = "60fdcf743435ca919da3ad30922ca75666a64ddad221beced531a341418ca37b"
+tag = "v6.2.0"
+sha256 = "d82ed3b089674c52992cba93dd148f3125fae4d8b3ceab4aa2e811fe3fa955d4"
 
 [[part]]
 [part.extension]
@@ -184,11 +184,12 @@ reason = "Claude Code is not set up here"
 
 [[part]]
 [part.extension]
-name = "attest"
-version = "0.1.0"
+name = "greensummit"
+version = "0.2.0"
 harness = ">=0.3"
 summary = "CI skips what your laptop already checked, on a signed tree"
 needs = ["greengate"]
+aliases = ["attest"]
 # No binary on the machine: CI verifies, greengate signs at pre-push.
 
 [[part.repo_file]]
@@ -203,7 +204,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: fredericrous/attest@v1
+      - uses: greenharness/greensummit@v2
 '''
 
 [[part.recommend]]
