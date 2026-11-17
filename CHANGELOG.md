@@ -5,6 +5,15 @@ section is missing here.
 
 ## Unreleased
 
+## v0.8.1
+
+- Pins skills 0.13.0: worktree-task gains a Handoff section. At a boundary,
+  with nothing of the session in flight, the agent files its follow-ups from
+  the repository's inbox as tickets, writes the handoff into the plan or the
+  programme map, and ends with ``safe to /clear; next: `<prompt>` ``, which the
+  clear-relay plugin reads. tag-release hands off after its sweep.
+- The greenbelay pack is vendored.
+
 ## v0.8.0
 
 - **greenpiste is now greenbelay** (ADR-0071). The part is named
