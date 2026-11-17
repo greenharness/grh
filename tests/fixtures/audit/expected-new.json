@@ -13,7 +13,7 @@
   },
   "ci_present": {
     "hooks": [],
-    "install": "grh install greengate greenbelay attest"
+    "install": "grh install greengate greenbelay greensummit"
   },
   "claude_installed": {
     "hooks": [],

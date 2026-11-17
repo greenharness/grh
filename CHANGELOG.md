@@ -5,6 +5,17 @@ section is missing here.
 
 ## Unreleased
 
+## v0.10.0
+
+- The part `attest` is now `greensummit` (ADR-0073): git-attest became
+  greensummit in `greenharness/greensummit`. `attest` stays an alias, so
+  `grh install attest` installs greensummit with a notice, and its CI file
+  uses `greenharness/greensummit@v2`. The file stays
+  `workflows/attest.yml`.
+- Pins greengate 4.11.0 (was 4.10.0): it signs and reads its attestations
+  under greensummit 2.0.0's names (`refs/notes/greensummit`).
+- Pins greenbelay 6.2.0 (was 6.1.0): its readers follow the same names.
+
 ## v0.9.0
 
 - Pins greengate 4.10.0 (was 4.0.0): among the releases between,

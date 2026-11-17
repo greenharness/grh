@@ -181,7 +181,7 @@ impl Fx {
             "[[part]]\n[part.extension]\nname = \"attest\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
              summary = \"x\"\nneeds = [\"gate\"]\n\
              [[part.repo_file]]\ndirs = [\".forgejo\", \".github\"]\npath = \"workflows/attest.yml\"\n\
-             content = \"name: attest\\non:\\n  pull_request:\\njobs:\\n  attest:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: fredericrous/attest@v1\\n\"\n\
+             content = \"name: attest\\non:\\n  pull_request:\\njobs:\\n  attest:\\n    runs-on: ubuntu-latest\\n    steps:\\n      - uses: actions/checkout@v4\\n      - uses: greenharness/greensummit@v2\\n\"\n\
              [[part]]\n[part.extension]\nname = \"design\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
              summary = \"x\"\nneeds = []\npublished = false\n\
              [[part]]\n[part.extension]\nname = \"lab\"\nversion = \"1.0.0\"\nharness = \">=0.4\"\n\
@@ -888,7 +888,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: fredericrous/attest@v1
+      - uses: greenharness/greensummit@v2
 ";
 
 fn extension_dir(fx: &Fx) -> String {
@@ -1661,7 +1661,7 @@ fn audit_rows_with_the_gate_installed_name_the_parts_by_the_catalog() {
             "decisions",
             "conform",
             "router",
-            "attest",
+            "greensummit",
             "workflow",
             "design"
         ]

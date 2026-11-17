@@ -10,7 +10,7 @@
 
 [extension]
 name = "greengate"
-version = "4.10.0"
+version = "4.11.0"
 harness = ">=0.3"
 summary = "what a commit or a push may carry: git hooks"
 needs = []
@@ -78,9 +78,9 @@ reason = "a git repository: gate its commits and pushes"
 # Written by scripts/release-manifest.py from the release's own tarballs.
 [tool.release]
 repo = "greenharness/greengate"
-version = "4.10.0"
+version = "4.11.0"
 [tool.release.sha256]
-aarch64-apple-darwin = "aacfe7bdb42b3e0751c2be6324eddc173541e4446349d62b840fecd279e4863a"
-x86_64-apple-darwin = "9b83ecc663e78c717b46a49b49ac89a181ac3a2d886da754292abe1584eb539e"
-aarch64-unknown-linux-gnu = "cfffd4b2b80e3a65a0811f0ed0a18a22658d97069a030043ea1c140761aed410"
-x86_64-unknown-linux-gnu = "e8b56b348d1b50259b87f590370fd62f58e3db097f4dff276e83b8fe8884f071"
+aarch64-apple-darwin = "ce46582610c1e860e03d3c60d13937fa4d54ff5814375979f8e894a753255c49"
+x86_64-apple-darwin = "e29a24b6c683f74f4c6c05139cd802b03dec05b54901b23ae097b483720b326f"
+aarch64-unknown-linux-gnu = "84711bc2e3eecb8b12573015e5d7a5670e111c95c63fd97b2e28793348d2436a"
+x86_64-unknown-linux-gnu = "9ec35bb93f439f33fb137a886cdd226eb7979b346bfe946ea85500f2aeba709a"

@@ -1054,8 +1054,12 @@ mod tests {
             ["decisions", "conform"]
         );
         assert_eq!(
+            names(&catalog.resolve(&args(&["greensummit"])).unwrap()),
+            ["greengate", "greensummit"]
+        );
+        assert_eq!(
             names(&catalog.resolve(&args(&["attest"])).unwrap()),
-            ["greengate", "attest"]
+            ["greengate", "greensummit"]
         );
         assert_eq!(
             names(&catalog.resolve(&args(&["workflow"])).unwrap()),

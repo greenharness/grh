@@ -17,6 +17,7 @@ const PARTS: &[&str] = &[
     "decisions",
     "conform",
     "router",
+    "greensummit",
     "attest",
     "workflow",
     "design",

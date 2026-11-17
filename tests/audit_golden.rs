@@ -135,7 +135,11 @@ const FIXTURES: &[Fixture] = &[
 
 /// The part names grh 0.2.0 printed in its audit rows, and what the catalog
 /// calls those parts now.
-const NAMES: [(&str, &str); 2] = [("gate", "greengate"), ("guardrails", "greenbelay")];
+const NAMES: [(&str, &str); 3] = [
+    ("gate", "greengate"),
+    ("guardrails", "greenbelay"),
+    ("attest", "greensummit"),
+];
 
 fn fixtures_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/audit")
