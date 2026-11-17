@@ -5,6 +5,17 @@ section is missing here.
 
 ## Unreleased
 
+## v0.9.0
+
+- Pins greengate 4.10.0 (was 4.0.0): among the releases between,
+  `greengate land --detach` runs a land as a worker that writes a receipt and
+  returns at once, and `greengate land --wait <receipt>` follows it to its
+  verdict.
+- Pins greenbelay 6.1.0: the land guard reads the detached land and its wait,
+  the retry check defers a running receipt, and the new `land-detached` rule
+  (advise) points a foreground land near the Bash tool's timeout to
+  `--detach` and Monitor.
+
 ## v0.8.1
 
 - Pins skills 0.13.0: worktree-task gains a Handoff section. At a boundary,
