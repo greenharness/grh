@@ -1,6 +1,6 @@
 ---
 status: active
-next: Phase 1 (grh PR)
+next: merge, release grh 0.11.0 (tag-release), then Phase 2 (decisions) and Phase 3 (machine)
 programme: greenrack-rename t09-claude-side
 branch: prog/greenrack-rename/t09-claude-side (decisions), feat/greenrack-design-part (grh)
 repos: [grh, decisions, dotfiles]
@@ -144,6 +144,22 @@ acceptance `make check`); the release by hand (`tag-release`).
    agent answers a one-component lookup through `mcp__greenrack__greenrack_lookup`; any `mcp__duro-ds__*` tools listed come from the app's own `.mcp.json` (t08) and do not fail this check.
 5. `relais programme check docs/programmes/greenrack-rename` exits 0.
 
+## Observed (Phase 1, before the push)
+
+1. `make check` → green → green (8 test binaries, clippy, fmt); `make pins-check` → `greengate: ok`, `greenbelay: ok`.
+2. Regression test without `create_dir_all` → fails → fails with `cannot restore …: No such file or directory`; with the fix → passes.
+3. Legacy goldens → only design reasons move → 12× "no greenrack dependency", 1× "(the old scope)", nothing else.
+4. Built grh `audit` in scratch dirs: new / old / both / none → recommend (greenrack-*) / recommend (old scope) / recommend (greenrack-*) / not useful; widest line 76 columns; `dep:` signals true/false as expected in each.
+
+## Implementation review
+
+- implementation-review: approve after delta; names and golden `duro` fixed; legacy `install` field deliberate (overridden by expected-new.json); 52k+57k tokens.
+- backend: approve after delta; restore/cleanup split and quoting fixed; race deliberate (doc comment); leftover-backup summary line deliberate: printed, low.
+- lang:rust: approve after delta; per-step error context deliberate: paths plus the printed command suffice.
+- unix: approve after delta; quoting with `--` and hidden staging fixed; `ui.ok` vs `ui.warn` deliberate: low.
+
 ## Decision log
+
+- 2026-11-18: relais run run-660891529d886-9efc stopped on verification_inputs_changed (the 0.11.0 bump in Cargo.*); approved as the plan's own bump, then `make check` run by hand.
 
 <!-- panel: repos=grh,decisions,dotfiles reviewers=backend,lang:rust,tui,unix,codex body-sha=16432889ea9e -->
