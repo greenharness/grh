@@ -1,6 +1,6 @@
 ---
-status: active
-next: merge, release grh 0.11.0 (tag-release), then Phase 2 (decisions) and Phase 3 (machine)
+status: done
+next: none (programme greenrack-rename continues at t07)
 programme: greenrack-rename t09-claude-side
 branch: prog/greenrack-rename/t09-claude-side (decisions), feat/greenrack-design-part (grh)
 repos: [grh, decisions, dotfiles]
@@ -151,6 +151,19 @@ acceptance `make check`); the release by hand (`tag-release`).
 3. Legacy goldens → only design reasons move → 12× "no greenrack dependency", 1× "(the old scope)", nothing else.
 4. Built grh `audit` in scratch dirs: new / old / both / none → recommend (greenrack-*) / recommend (old scope) / recommend (greenrack-*) / not useful; widest line 76 columns; `dep:` signals true/false as expected in each.
 
+## Observed (Phase 3, the machine, 2026-11-18)
+
+1. `brew upgrade` → grh 0.11.0 → `grh 0.11.0`; release run 44275894623 green (brew, crates.io, 5 assets + SHA256SUMS).
+2. Snapshot → 429 files with `SHA256SUMS` → `~/.local/state/grh/backup/t09-2026-11-18/`.
+3. `grh uninstall ext:design --yes` → duro-ds removed, backup restored → restored `duro-mockup/SKILL.md` byte-equal to the backup, no staging file, receipt has no `ext:design`.
+4. Old skill removed → `claude mcp get duro-ds` exit 1 (an unknown name also exits 1).
+5. `grh install --extension` from a fresh `npm pack` (tarball sha256 7b6194bd…1e82) → 4 skills, 1 agent, MCP `greenrack` → as expected.
+6. Guard replaced (JSON-escaped one-match swap, `jq empty`, `mv`; template through `chezmoi execute-template | jq empty`) → fredericrous/dotfiles#68.
+
+Verification 3: `claude mcp get greenrack` 0, `duro-ds` 1; `greenrack-mockup` present, `duro-mockup` absent; agent tools `mcp__greenrack__greenrack_lookup`; the guard equals the manifest command once in each file; no `@duro-app/cli` left; `chezmoi diff` empty.
+Verification 4: a fresh `claude -p` in duro-app lists five `mcp__greenrack__*` tools and `greenrack-mockup`; the lookup agent answers "Button, `variant`" through `mcp__greenrack__greenrack_lookup` (headless needed `--allowedTools` for it).
+Verification 5: `relais programme check docs/programmes/greenrack-rename` exit 0 (fredericrous/decisions#249).
+
 ## Implementation review
 
 - implementation-review: approve after delta; names and golden `duro` fixed; legacy `install` field deliberate (overridden by expected-new.json); 52k+57k tokens.
@@ -159,6 +172,9 @@ acceptance `make check`); the release by hand (`tag-release`).
 - unix: approve after delta; quoting with `--` and hidden staging fixed; `ui.ok` vs `ui.warn` deliberate: low.
 
 ## Decision log
+
+- 2026-11-18: Phase 2 was folded into one decisions PR after Phase 3 (fredericrous/decisions#249) instead of a progress PR and a closing PR: t09 stayed open until the machine checks passed, as the review asked, and one PR fewer.
+- 2026-11-18: dotfiles left out of t13's `repos` (not a repository under the plan root); its question names the template instead.
 
 - 2026-11-18: relais run run-660891529d886-9efc stopped on verification_inputs_changed (the 0.11.0 bump in Cargo.*); approved as the plan's own bump, then `make check` run by hand.
 
