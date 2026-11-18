@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.10.1
+
+- Pins skills 0.14.0 (was 0.13.0): `merge-when-green` gains step 7, the
+  handoff after the merge that ends the work, also when no `worktree-task`
+  finish ran.
+
 ## v0.10.0
 
 - The part `attest` is now `greensummit` (ADR-0073): git-attest became
