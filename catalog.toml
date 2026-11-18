@@ -285,18 +285,24 @@ reason = "Claude Code is not set up here"
 name = "design"
 version = "0.1.0"
 harness = ">=0.3"
-summary = "the Duro design system, themed by your tokens (extension)"
+summary = "the greenrack design system, themed by your tokens (extension)"
 needs = []
 published = false
-# Installed from its published extension manifest; not published yet.
-# Its audit rule lives here until that manifest carries its own.
+# Installs from an unpacked manifest (npm pack of @greenharness/greenrack-cli),
+# not from a published part, so it stays unpublished here.
+# Its audit rules live here until that manifest carries its own.
+
+[[part.recommend]]
+when = ["dep:@greenharness/greenrack-"]
+verdict = "recommend"
+reason = "package.json depends on @greenharness/greenrack-*"
 
 [[part.recommend]]
 when = ["dep:@duro-app/"]
 verdict = "recommend"
-reason = "package.json depends on @duro-app/"
+reason = "package.json depends on @duro-app/ (the old scope)"
 
 [[part.recommend]]
 when = []
 verdict = "not useful"
-reason = "no @duro-app/ dependency"
+reason = "no greenrack dependency"

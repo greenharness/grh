@@ -7,6 +7,10 @@
     "hooks": [],
     "install": "grh install greengate greenbelay conform"
   },
+  "both_scopes": {
+    "hooks": [],
+    "install": "grh install greengate greenbelay design"
+  },
   "ci_attest": {
     "hooks": [],
     "install": "grh install greengate greenbelay"
@@ -36,6 +40,10 @@
       "greengate"
     ],
     "install": "grh install greenbelay"
+  },
+  "greenrack": {
+    "hooks": [],
+    "install": "grh install greengate greenbelay design"
   },
   "hooks_path": {
     "hooks": [

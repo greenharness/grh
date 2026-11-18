@@ -123,6 +123,30 @@ const FIXTURES: &[Fixture] = &[
         env: &[],
     },
     Fixture {
+        name: "greenrack",
+        files: &[
+            (
+                "package.json",
+                "{\"dependencies\":{\"@greenharness/greenrack-ui\":\"^7\"}}\n",
+            ),
+            ("src/app.tsx", "export {}\n"),
+        ],
+        hooks_path: None,
+        env: &[],
+    },
+    Fixture {
+        name: "both_scopes",
+        files: &[
+            (
+                "package.json",
+                "{\"dependencies\":{\"@duro-app/ui\":\"^6\",\"@greenharness/greenrack-ui\":\"^7\"}}\n",
+            ),
+            ("src/app.tsx", "export {}\n"),
+        ],
+        hooks_path: None,
+        env: &[],
+    },
+    Fixture {
         name: "aval_mcp_registered",
         files: &[
             ("docs/decisions/0001.md", "# d\n"),
@@ -394,4 +418,46 @@ fn the_text_audit_names_a_recommended_experiment_after_the_install_line() {
         Some(&"router is an experiment: grh install router to try it"),
         "{text}"
     );
+}
+
+#[test]
+fn both_dependency_scopes_are_detected_and_the_new_one_names_the_reason() {
+    let bin = Path::new(env!("CARGO_BIN_EXE_grh"));
+    let cases = [
+        ("empty", false, false, "no greenrack dependency"),
+        (
+            "duro",
+            true,
+            false,
+            "package.json depends on @duro-app/ (the old scope)",
+        ),
+        (
+            "greenrack",
+            false,
+            true,
+            "package.json depends on @greenharness/greenrack-*",
+        ),
+        (
+            "both_scopes",
+            true,
+            true,
+            "package.json depends on @greenharness/greenrack-*",
+        ),
+    ];
+    for (name, old_scope, new_scope, reason) in cases {
+        let fx = FIXTURES.iter().find(|fx| fx.name == name).expect("fixture");
+        let doc = audit(bin, fx);
+        assert_eq!(doc["signals"]["dep:@duro-app/"], old_scope, "{name}: old");
+        assert_eq!(
+            doc["signals"]["dep:@greenharness/greenrack-"], new_scope,
+            "{name}: new"
+        );
+        let row = doc["parts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["part"] == "design")
+            .unwrap();
+        assert_eq!(row["reason"], reason, "{name}: reason");
+    }
 }

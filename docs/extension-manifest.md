@@ -6,7 +6,7 @@ Unknown keys, at any level, are refused (exit 2). So is a `harness` requirement 
 
 ```toml
 [extension]
-name = "duro"            # required: letters, digits, - _ .
+name = "greenrack"       # required: letters, digits, - _ .
 version = "1.0.0"        # required
 harness = ">=0.1"        # optional: ">=0.1", "^0.1", "0.1", ">=0.1, <1"
 
@@ -17,18 +17,18 @@ path = "skills/hello"    # a directory with SKILL.md (or a single .md file)
 path = "agents/helper.md"
 
 [[mcp]]
-name = "duro"
-command = "duro-mcp"
+name = "greenrack"
+command = "greenrack-mcp"
 args = ["--stdio"]
 
 [[session_context]]
-command = "duro context"
+command = "greenrack context"
 
 [[doctor]]
-command = "duro doctor"
+command = "greenrack doctor"
 
 [conform]
-eslint = "duro lint"
+eslint = "greenrack lint"
 ```
 
 ## Sections

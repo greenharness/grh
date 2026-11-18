@@ -1,0 +1,41 @@
+# Copied from npm pack @greenharness/greenrack-cli@7.0.0 (tarball sha256
+# 7b6194bd2f806046a03bb5f3697588232df08de0e9fb37b94bf0b99612231e82), package/greenharness.toml
+# byte for byte below this header (file sha256 48c8760cec04629ee03ee05dfea1d620e8f0514a86c4a335f99daab9a1014206).
+# The greenrack design system as the `design` Green Harness extension (ADR-0048).
+# grh manifest v1: docs/extension-manifest.md in the grh repository.
+# `version` is written from the git tag by the release, beside package.json's.
+
+[extension]
+name = "design"
+version = "7.0.0"
+harness = ">=0.1"
+
+[[skill]]
+path = "skills/colors"
+
+[[skill]]
+path = "skills/typography"
+
+[[skill]]
+path = "skills/ui"
+
+[[skill]]
+path = "skills/greenrack-mockup"
+
+[[agent]]
+path = "agents/design-system-lookup.md"
+
+[[mcp]]
+name = "greenrack"
+command = "npx"
+args = ["-y", "-p", "@greenharness/greenrack-cli@^7", "-p", "@modelcontextprotocol/sdk", "greenrack", "mcp"]
+
+# Quiet outside a greenrack consumer (on @greenharness/greenrack-* or, until
+# the census, the old @duro-app/*); quiet too when a hook install (greenrack's,
+# or the old duro one) already wired the catalog hook, so a session never gets
+# the catalog twice.
+[[session_context]]
+command = "sh -c '[ -n \"$(find . -maxdepth 3 -name package.json -not -path \"*/node_modules/*\" -exec grep -l -e \"@greenharness/greenrack-\" -e \"@duro-app/\" {} + 2>/dev/null)\" ] || exit 0; [ -e .claude/hooks/greenrack-catalog.sh ] && exit 0; [ -e .claude/hooks/duro-catalog.sh ] && exit 0; exec npx -y @greenharness/greenrack-cli@^7 context'"
+
+[[doctor]]
+command = "sh -c '[ -n \"$(find . -maxdepth 3 -name package.json -not -path \"*/node_modules/*\" -exec grep -l -e \"@greenharness/greenrack-\" -e \"@duro-app/\" {} + 2>/dev/null)\" ] || exit 0; exec npx -y @greenharness/greenrack-cli@^7 doctor'"

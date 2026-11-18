@@ -25,6 +25,7 @@ const PARTS: &[&str] = &[
     "aval",
     "relais",
     "duro",
+    "greenrack",
     "husky",
     "lefthook",
 ];
