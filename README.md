@@ -32,7 +32,7 @@ lists the parts and exits 2.
 | conform | adr-lint | which decided code rules a tree breaks, by lint (needs decisions) |
 | greensummit (was attest) | greensummit | CI skips what your laptop already checked (needs greengate) |
 | workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs greenbelay and greengate) |
-| design | Duro | the Duro design system, themed by your tokens (extension, not published yet) |
+| design | greenrack | the greenrack design system, themed by your tokens (extension, installed from its manifest) |
 
 There are no profiles (removed in 0.3.0): use the checklist, name the parts,
 or pass `--all`. An experimental part is installed only when you name or tick

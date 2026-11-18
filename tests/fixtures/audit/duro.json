@@ -56,7 +56,7 @@
     },
     {
       "part": "design",
-      "reason": "package.json depends on @duro-app/",
+      "reason": "package.json depends on @duro-app/ (the old scope)",
       "verdict": "recommend"
     }
   ],

@@ -53,7 +53,7 @@
     },
     {
       "part": "design",
-      "reason": "no @duro-app/ dependency",
+      "reason": "no greenrack dependency",
       "verdict": "not useful"
     }
   ],

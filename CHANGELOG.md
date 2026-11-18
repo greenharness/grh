@@ -5,6 +5,16 @@ section is missing here.
 
 ## Unreleased
 
+## v0.11.0
+
+- The part `design` is now the greenrack design system: `grh audit`
+  recommends it for a `package.json` that depends on
+  `@greenharness/greenrack-*`, and still on the old `@duro-app/` scope
+  (which names itself as old). It installs from an unpacked manifest.
+- `grh uninstall` restores a backup whose parent directory was pruned: it
+  recreates the directory, copies through a temporary file and renames it,
+  and keeps the backup, naming the command to run, when that fails.
+
 ## v0.10.1
 
 - Pins skills 0.14.0 (was 0.13.0): `merge-when-green` gains step 7, the

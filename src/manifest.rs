@@ -953,6 +953,7 @@ mod tests {
 
     const BASE: &str = "[extension]\nname = \"duro\"\nversion = \"1.0.0\"\n";
     const DURO_V1: &str = include_str!("../tests/fixtures/duro-greenharness.toml");
+    const GREENRACK_7: &str = include_str!("../tests/fixtures/greenrack-greenharness.toml");
 
     const V2: &str = "[extension]\nname = \"tool\"\nversion = \"1.0.0\"\nharness = \">=0.2\"\n\
          summary = \"a tool\"\nneeds = [\"other\"]\naliases = [\"old\"]\n\
@@ -968,6 +969,13 @@ mod tests {
         let m = Manifest::parse(DURO_V1).unwrap();
         assert_eq!(m.name(), "design");
         assert!(m.tool.is_none() && !m.mcp.is_empty());
+    }
+
+    #[test]
+    fn greenracks_7_manifest_loads_with_its_renamed_claude_side() {
+        let m = Manifest::parse(GREENRACK_7).unwrap();
+        assert_eq!(m.mcp[0].name, "greenrack");
+        assert!(!m.session_context.is_empty() && !m.doctor.is_empty());
     }
 
     #[test]

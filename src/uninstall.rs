@@ -377,6 +377,23 @@ fn remove_extension(ui: &Ui, store: &mut Store, name: &str, foreign_markers: &[S
     }
 }
 
+/// Copy `backup` over the absent `from`: create its parent directory, copy to
+/// a temporary file beside it, rename that into place, and only then remove
+/// the backup. On failure the backup stays and no temporary file is left.
+fn restore_file(backup: &Path, from: &Path) -> std::io::Result<()> {
+    let parent = from.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut tmp_name = from.file_name().unwrap_or_default().to_os_string();
+    tmp_name.push(format!(".grh-restore-{}", std::process::id()));
+    let tmp = parent.join(tmp_name);
+    let placed = std::fs::copy(backup, &tmp).and_then(|_| std::fs::rename(&tmp, from));
+    if let Err(x) = placed {
+        let _ = std::fs::remove_file(&tmp); // best effort: the copy error is the one reported
+        return Err(x);
+    }
+    std::fs::remove_file(backup)
+}
+
 /// Put an original back when the file grh placed over it is gone.
 fn restore_backups(ui: &Ui, store: &mut Store, name: &str, entries: &[Entry]) -> Undone {
     let mut failures: Vec<Exit> = Vec::new();
@@ -390,15 +407,21 @@ fn restore_backups(ui: &Ui, store: &mut Store, name: &str, entries: &[Entry]) ->
             if !backup.exists() {
                 // Already restored or removed by hand.
             } else if !from.exists() {
-                let restored =
-                    std::fs::copy(&backup, &from).and_then(|_| std::fs::remove_file(&backup));
-                match restored {
+                match restore_file(&backup, &from) {
                     Ok(()) => ui.ok(&format!("{name}: restored {}", from.display())),
                     Err(x) => {
+                        let parent = from.parent().unwrap_or_else(|| Path::new("."));
                         failures.push(fail(
                             ui,
                             name,
-                            format!("cannot restore {}: {x}; backup kept", from.display()),
+                            format!(
+                                "cannot restore {}: {x}; backup kept at {}; run: mkdir -p {} && cp {} {}",
+                                from.display(),
+                                backup.display(),
+                                parent.display(),
+                                backup.display(),
+                                from.display()
+                            ),
                         ));
                         continue;
                     }
@@ -692,4 +715,74 @@ fn remove_aliases(
         failures.extend(store.remove_where(|x| *x == e).err());
     }
     failures
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn begin_done(store: &mut Store, kind: Kind) {
+        let idx = store.begin(Entry::machine("p", kind)).unwrap();
+        store.done(idx).unwrap();
+    }
+
+    #[test]
+    fn a_backup_is_restored_into_a_directory_the_removal_pruned() {
+        let tmp = tempfile::tempdir().unwrap();
+        let claude = tmp.path().join("claude");
+        let skill = claude.join("skills/alpha/SKILL.md");
+        let backup = tmp.path().join("state/backup/1/skills/alpha/SKILL.md");
+        std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        std::fs::write(&skill, b"placed by grh").unwrap();
+        std::fs::write(&backup, b"the original").unwrap();
+        let mut store = Store::open_in(&tmp.path().join("state/grh")).unwrap();
+        begin_done(
+            &mut store,
+            Kind::Backup {
+                path: backup.to_string_lossy().into_owned(),
+                from: skill.to_string_lossy().into_owned(),
+            },
+        );
+        begin_done(
+            &mut store,
+            Kind::File {
+                path: skill.to_string_lossy().into_owned(),
+                sha256: sha256_hex(b"placed by grh"),
+            },
+        );
+
+        let undone = remove_extension(&Ui::new(true), &mut store, "p", &[]);
+
+        assert!(undone.failures.is_empty(), "{:?}", undone.failures);
+        assert_eq!(std::fs::read(&skill).unwrap(), b"the original");
+        assert!(!backup.exists());
+        assert!(store.receipt.entries.iter().all(|e| e.part != "p"));
+    }
+
+    #[test]
+    fn a_failed_restore_keeps_the_backup_and_names_the_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let blocker = tmp.path().join("blocker");
+        let from = blocker.join("SKILL.md");
+        let backup = tmp.path().join("state/backup/SKILL.md");
+        std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
+        std::fs::write(&backup, b"the original").unwrap();
+        std::fs::write(&blocker, b"a file where the directory should be").unwrap();
+        let mut store = Store::open_in(&tmp.path().join("state/grh")).unwrap();
+        begin_done(
+            &mut store,
+            Kind::Backup {
+                path: backup.to_string_lossy().into_owned(),
+                from: from.to_string_lossy().into_owned(),
+            },
+        );
+        let entries = store.receipt.entries.clone();
+
+        let undone = restore_backups(&Ui::new(true), &mut store, "p", &entries);
+
+        assert_eq!(undone.failures.len(), 1);
+        assert!(backup.exists());
+        assert_eq!(store.receipt.entries.len(), 1);
+    }
 }
