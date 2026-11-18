@@ -5,6 +5,13 @@ section is missing here.
 
 ## Unreleased
 
+## v0.11.1
+
+- Pins skills 0.15.0 (was 0.14.0): `worktree-task` F7 cold-loads the
+  preview in an isolated browser context before asking for approval, fixes
+  a login wall on the running preview, and asks the person only when it
+  cannot; the guide's "Try it" step names the sign-in the page needs.
+
 ## v0.11.0
 
 - The part `design` is now the greenrack design system: `grh audit`
