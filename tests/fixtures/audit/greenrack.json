@@ -8,7 +8,7 @@
     "relais": "absent"
   },
   "dir": "<dir>",
-  "duro": true,
+  "duro": false,
   "extras": [
     "design"
   ],

@@ -378,20 +378,29 @@ fn remove_extension(ui: &Ui, store: &mut Store, name: &str, foreign_markers: &[S
 }
 
 /// Copy `backup` over the absent `from`: create its parent directory, copy to
-/// a temporary file beside it, rename that into place, and only then remove
-/// the backup. On failure the backup stays and no temporary file is left.
-fn restore_file(backup: &Path, from: &Path) -> std::io::Result<()> {
+/// a hidden temporary file beside it, and rename that into place. On failure
+/// the backup stays and no temporary file is left. Once the original is back,
+/// the backup is removed; a failure there is returned as `Ok(Some(_))`, since
+/// the restore itself succeeded. (A file created at `from` after the caller's
+/// check is replaced: grh is the only writer it expects there.)
+fn restore_file(backup: &Path, from: &Path) -> std::io::Result<Option<std::io::Error>> {
     let parent = from.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent)?;
-    let mut tmp_name = from.file_name().unwrap_or_default().to_os_string();
-    tmp_name.push(format!(".grh-restore-{}", std::process::id()));
-    let tmp = parent.join(tmp_name);
-    let placed = std::fs::copy(backup, &tmp).and_then(|_| std::fs::rename(&tmp, from));
+    let mut staging_name = std::ffi::OsString::from(".");
+    staging_name.push(from.file_name().unwrap_or_default());
+    staging_name.push(format!(".grh-restore-{}", std::process::id()));
+    let staging = parent.join(staging_name);
+    let placed = std::fs::copy(backup, &staging).and_then(|_| std::fs::rename(&staging, from));
     if let Err(x) = placed {
-        let _ = std::fs::remove_file(&tmp); // best effort: the copy error is the one reported
+        let _ = std::fs::remove_file(&staging); // best effort: the copy error is the one reported
         return Err(x);
     }
-    std::fs::remove_file(backup)
+    Ok(std::fs::remove_file(backup).err())
+}
+
+/// `path` quoted for a POSIX shell, for a command the person copies.
+fn quoted(path: &Path) -> String {
+    crate::ops::shell_quote(&path.to_string_lossy())
 }
 
 /// Put an original back when the file grh placed over it is gone.
@@ -408,19 +417,24 @@ fn restore_backups(ui: &Ui, store: &mut Store, name: &str, entries: &[Entry]) ->
                 // Already restored or removed by hand.
             } else if !from.exists() {
                 match restore_file(&backup, &from) {
-                    Ok(()) => ui.ok(&format!("{name}: restored {}", from.display())),
+                    Ok(None) => ui.ok(&format!("{name}: restored {}", from.display())),
+                    Ok(Some(x)) => ui.ok(&format!(
+                        "{name}: restored {}; could not remove its backup {}: {x}",
+                        from.display(),
+                        backup.display()
+                    )),
                     Err(x) => {
                         let parent = from.parent().unwrap_or_else(|| Path::new("."));
                         failures.push(fail(
                             ui,
                             name,
                             format!(
-                                "cannot restore {}: {x}; backup kept at {}; run: mkdir -p {} && cp {} {}",
+                                "cannot restore {}: {x}; backup kept at {}; run: mkdir -p -- {} && cp -- {} {}",
                                 from.display(),
                                 backup.display(),
-                                parent.display(),
-                                backup.display(),
-                                from.display()
+                                quoted(parent),
+                                quoted(&backup),
+                                quoted(&from)
                             ),
                         ));
                         continue;
@@ -433,7 +447,7 @@ fn restore_backups(ui: &Ui, store: &mut Store, name: &str, entries: &[Entry]) ->
                         from.display(),
                         backup.display()
                     ),
-                    &format!("cp {} {}", backup.display(), from.display()),
+                    &format!("cp -- {} {}", quoted(&backup), quoted(&from)),
                 );
             }
             if let Err(x) = store.remove_where(|x| x == e) {
@@ -721,35 +735,38 @@ fn remove_aliases(
 mod tests {
     use super::*;
 
-    fn begin_done(store: &mut Store, kind: Kind) {
-        let idx = store.begin(Entry::machine("p", kind)).unwrap();
-        store.done(idx).unwrap();
+    /// A receipt holding `kinds` as done entries of the part `p`.
+    fn receipt_with(state: &Path, kinds: Vec<Kind>) -> Store {
+        let mut store = Store::open_in(state).unwrap();
+        for kind in kinds {
+            let idx = store.begin(Entry::machine("p", kind)).unwrap();
+            store.done(idx).unwrap();
+        }
+        store
     }
 
     #[test]
     fn a_backup_is_restored_into_a_directory_the_removal_pruned() {
-        let tmp = tempfile::tempdir().unwrap();
-        let claude = tmp.path().join("claude");
+        let dir = tempfile::tempdir().unwrap();
+        let claude = dir.path().join("claude");
         let skill = claude.join("skills/alpha/SKILL.md");
-        let backup = tmp.path().join("state/backup/1/skills/alpha/SKILL.md");
+        let backup = dir.path().join("state/backup/1/skills/alpha/SKILL.md");
         std::fs::create_dir_all(skill.parent().unwrap()).unwrap();
         std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
         std::fs::write(&skill, b"placed by grh").unwrap();
         std::fs::write(&backup, b"the original").unwrap();
-        let mut store = Store::open_in(&tmp.path().join("state/grh")).unwrap();
-        begin_done(
-            &mut store,
-            Kind::Backup {
-                path: backup.to_string_lossy().into_owned(),
-                from: skill.to_string_lossy().into_owned(),
-            },
-        );
-        begin_done(
-            &mut store,
-            Kind::File {
-                path: skill.to_string_lossy().into_owned(),
-                sha256: sha256_hex(b"placed by grh"),
-            },
+        let mut store = receipt_with(
+            &dir.path().join("state/grh"),
+            vec![
+                Kind::Backup {
+                    path: backup.to_string_lossy().into_owned(),
+                    from: skill.to_string_lossy().into_owned(),
+                },
+                Kind::File {
+                    path: skill.to_string_lossy().into_owned(),
+                    sha256: sha256_hex(b"placed by grh"),
+                },
+            ],
         );
 
         let undone = remove_extension(&Ui::new(true), &mut store, "p", &[]);
@@ -758,30 +775,45 @@ mod tests {
         assert_eq!(std::fs::read(&skill).unwrap(), b"the original");
         assert!(!backup.exists());
         assert!(store.receipt.entries.iter().all(|e| e.part != "p"));
+        let left: Vec<_> = std::fs::read_dir(skill.parent().unwrap())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, vec![std::ffi::OsString::from("SKILL.md")]);
     }
 
     #[test]
     fn a_failed_restore_keeps_the_backup_and_names_the_command() {
-        let tmp = tempfile::tempdir().unwrap();
-        let blocker = tmp.path().join("blocker");
+        let dir = tempfile::tempdir().unwrap();
+        let blocker = dir.path().join("blocker dir");
         let from = blocker.join("SKILL.md");
-        let backup = tmp.path().join("state/backup/SKILL.md");
+        let backup = dir.path().join("state/backup/SKILL.md");
         std::fs::create_dir_all(backup.parent().unwrap()).unwrap();
         std::fs::write(&backup, b"the original").unwrap();
         std::fs::write(&blocker, b"a file where the directory should be").unwrap();
-        let mut store = Store::open_in(&tmp.path().join("state/grh")).unwrap();
-        begin_done(
-            &mut store,
-            Kind::Backup {
+        let mut store = receipt_with(
+            &dir.path().join("state/grh"),
+            vec![Kind::Backup {
                 path: backup.to_string_lossy().into_owned(),
                 from: from.to_string_lossy().into_owned(),
-            },
+            }],
         );
         let entries = store.receipt.entries.clone();
 
         let undone = restore_backups(&Ui::new(true), &mut store, "p", &entries);
 
         assert_eq!(undone.failures.len(), 1);
+        let Exit::Failed(text) = &undone.failures[0] else {
+            panic!("{:?}", undone.failures[0]);
+        };
+        assert!(
+            text.contains(&format!("backup kept at {}", backup.display())),
+            "{text}"
+        );
+        let cp = format!("cp -- {} {}", quoted(&backup), quoted(&from));
+        assert!(text.contains(&cp), "{text}");
+        assert!(text.contains("'"), "the paths are quoted: {text}");
         assert!(backup.exists());
         assert_eq!(store.receipt.entries.len(), 1);
     }

@@ -973,9 +973,9 @@ mod tests {
 
     #[test]
     fn greenracks_7_manifest_loads_with_its_renamed_claude_side() {
-        let m = Manifest::parse(GREENRACK_7).unwrap();
-        assert_eq!(m.mcp[0].name, "greenrack");
-        assert!(!m.session_context.is_empty() && !m.doctor.is_empty());
+        let manifest = Manifest::parse(GREENRACK_7).unwrap();
+        assert_eq!(manifest.mcp[0].name, "greenrack");
+        assert!(!manifest.session_context.is_empty() && !manifest.doctor.is_empty());
     }
 
     #[test]
