@@ -5,6 +5,15 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.0
+
+- Pins skills 0.18.0 (was 0.17.0). The `browser-check` agent no longer stops
+  when chrome-devtools MCP is missing: it falls back to Playwright through the
+  new `browser-check-runner` skill (a committed Node runner, pinned
+  `playwright@1.60.0`, one JSON report), then to Claude in Chrome for pages on
+  this machine only. The workflow part installs `browser-check-runner`. Its
+  report's first line names the browser and whether it ran in your profile.
+
 ## v0.13.0
 
 - Pins skills 0.17.0 (was 0.16.0). In a programme, the Handoff step of
