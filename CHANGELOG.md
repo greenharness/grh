@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+## v0.12.0
+
+- Pins skills 0.16.0 (was 0.15.0) and adds `create-verify-skill` to the
+  `workflow` part: it writes a repository's own `verify-<app>` skill by
+  investigating how the app starts and is driven, then runs it once.
+  `worktree-task` F2 follows a repository's `verify-*` skill when it has
+  one, and the preview guide's first step carries a `Sign in:` line.
+
 ## v0.11.1
 
 - Pins skills 0.15.0 (was 0.14.0): `worktree-task` F7 cold-loads the

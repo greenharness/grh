@@ -1062,6 +1062,16 @@ mod tests {
     }
 
     #[test]
+    fn the_workflow_part_installs_the_verify_skill_generator() {
+        let catalog = Catalog::load().unwrap();
+        let part = catalog.part("workflow").unwrap();
+        assert!(part
+            .bundle_skills()
+            .iter()
+            .any(|name| name == "create-verify-skill"));
+    }
+
+    #[test]
     fn dependencies_are_added_before_what_needs_them() {
         let catalog = Catalog::load().unwrap();
         assert_eq!(
