@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.1
+
+- Pins skills 0.18.1 (was 0.18.0). The Handoff step of `worktree-task`,
+  `merge-when-green` and `tag-release` now says that the backticks around the
+  prompt in ``safe to /clear; next: `<prompt>` `` are part of the line, and it
+  shows the whole programme line with them. A session that dropped them ended
+  with a line clear-relay could not read, so it never cleared.
+
 ## v0.14.0
 
 - Pins skills 0.18.0 (was 0.17.0). The `browser-check` agent no longer stops
