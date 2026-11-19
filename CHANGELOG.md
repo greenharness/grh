@@ -5,6 +5,17 @@ section is missing here.
 
 ## Unreleased
 
+## v0.13.0
+
+- Pins skills 0.17.0 (was 0.16.0). In a programme, the Handoff step of
+  `worktree-task`, `merge-when-green` and `tag-release` names one ticket that
+  no other session holds: it runs `relais programme next --from
+  <repo>:<programme> --claim` (relais 0.71.0) and prompts
+  `resume <repo> <programme> <ticket>: <gist>`. When nothing is left the
+  session parks with `safe to /clear; parked: next due <date>`, which the
+  clear-relay plugin does not submit. Without relais it names the map's own
+  next ticket, or parks.
+
 ## v0.12.0
 
 - Pins skills 0.16.0 (was 0.15.0) and adds `create-verify-skill` to the
