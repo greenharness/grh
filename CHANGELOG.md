@@ -5,6 +5,15 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.3
+
+- Pins skills 0.20.0 (was 0.19.0). `retro` gives each candidate one `Cause:`
+  from a fixed list (greenbelay rule names, `relais:` causes copied from
+  relais's cause query, nine agent-behaviour causes, or `unlisted`) and a
+  `Target:` line with the cause's count, denominator and recount command.
+  Step 4 appends a deduplicated tally to `~/.claude/retro/causes.tsv`, with a
+  `__reviewed__` line per session read.
+
 ## v0.14.2
 
 - Pins skills 0.19.0 (was 0.18.1). The `browser-check` agent's brief may carry
