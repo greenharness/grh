@@ -5,6 +5,17 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.2
+
+- Pins skills 0.19.0 (was 0.18.1). The `browser-check` agent's brief may carry
+  the `<<<TREE repo=… sha=…>>>` line that `greenbelay tree-sha --block` prints;
+  its report keeps `browser:` first and `url:` second, and an unreachable page
+  is the one line `unreachable: <url>`. greenbelay 6.6.0's `push-browser-check`
+  rule reads that report as the proof that a UI push's tree was checked.
+  `worktree-task` F2 passes the block and runs the check again when the tree
+  changes; F7 takes one tree block at its start so a commit's screenshots and
+  its browser-check share one `attestations/<sha>/` directory.
+
 ## v0.14.1
 
 - Pins skills 0.18.1 (was 0.18.0). The Handoff step of `worktree-task`,
