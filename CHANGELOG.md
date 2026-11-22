@@ -12,6 +12,8 @@ section is missing here.
   in its own transcript with no ExitPlanMode, runs F4b itself (greenbelay
   6.7.0 counts a review from a side transcript at the push), and holds a UI
   ticket that has no `evidence:` preview.
+- `url` 2.5.9 (was 2.5.8, through `ureq`) for RUSTSEC-2026-0592, a stack
+  overflow in `Url::origin()` on nested `blob:` URLs.
 
 ## v0.14.3
 
