@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.4
+
+- Pins skills 0.21.0 (was 0.20.0). worktree-task gains a programme-run case
+  (ADR-0080): a ticket agent started by a programme driver plans and reviews
+  in its own transcript with no ExitPlanMode, runs F4b itself (greenbelay
+  6.7.0 counts a review from a side transcript at the push), and holds a UI
+  ticket that has no `evidence:` preview.
+
 ## v0.14.3
 
 - Pins skills 0.20.0 (was 0.19.0). `retro` gives each candidate one `Cause:`

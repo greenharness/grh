@@ -472,7 +472,7 @@ dependencies = [
 
 [[package]]
 name = "grh"
-version = "0.14.3"
+version = "0.14.4"
 dependencies = [
  "clap",
  "crossterm",
