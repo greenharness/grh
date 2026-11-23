@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.14.5
+
+- Pins skills 0.22.0 (was 0.21.0). The review agents keep `model: inherit`
+  and declare `preferred-model: opus`; `agent-model-fallback` marks a
+  fallback launch of such an agent with a `model-fallback:` first line.
+
 ## v0.14.4
 
 - Pins skills 0.21.0 (was 0.20.0). worktree-task gains a programme-run case

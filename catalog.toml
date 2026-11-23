@@ -23,8 +23,8 @@
 # `enhances` edge points to an earlier entry; Catalog::checked refuses the rest.
 
 skills_repo = "greenharness/skills"
-skills_version = "0.21.0"
-skills_sha256 = "03c39b42af4859298d16163eecbeea9070aacbc621b9b822d4f9f675528541f5"
+skills_version = "0.22.0"
+skills_sha256 = "9fc4aaa8fb3711338d2c214095e8ed7a941a57c03622a10e7b00490c87db3c21"
 foreign_markers = ["relais:begin"]
 order = ["decisions", "greengate", "greenbelay", "router", "conform", "greensummit", "workflow", "design"]
 
