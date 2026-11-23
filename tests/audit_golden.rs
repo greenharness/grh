@@ -399,7 +399,7 @@ fn the_text_audit_names_a_recommended_experiment_after_the_install_line() {
 #[test]
 fn the_retired_scope_is_not_detected_and_the_greenrack_one_names_the_reason() {
     let bin = Path::new(env!("CARGO_BIN_EXE_grh"));
-    // Not in FIXTURES: no 0.2.0 golden exists for an app on the retired scope.
+    // Not in FIXTURES: its 0.2.0 golden recommended `design`, which this release drops.
     let retired_scope_only = Fixture {
         name: "retired_scope_only",
         files: &[
@@ -423,16 +423,15 @@ fn the_retired_scope_is_not_detected_and_the_greenrack_one_names_the_reason() {
         ),
     ];
     for (fx, new_scope, reason) in cases {
+        let name = fx.name;
         let doc = audit(bin, fx);
         assert!(
             doc["signals"]["dep:@duro-app/"].is_null(),
-            "{}: the retired scope is no signal",
-            fx.name
+            "{name}: the retired scope is no signal"
         );
         assert_eq!(
             doc["signals"]["dep:@greenharness/greenrack-"], new_scope,
-            "{}: new",
-            fx.name
+            "{name}: new"
         );
         let row = doc["parts"]
             .as_array()
@@ -440,12 +439,11 @@ fn the_retired_scope_is_not_detected_and_the_greenrack_one_names_the_reason() {
             .iter()
             .find(|r| r["part"] == "design")
             .unwrap();
-        assert_eq!(row["reason"], reason, "{}: reason", fx.name);
+        assert_eq!(row["reason"], reason, "{name}: reason");
         assert_eq!(
             row["verdict"] == "recommend",
             new_scope,
-            "{}: design is recommended only on the new scope",
-            fx.name
+            "{name}: design is recommended only on the new scope"
         );
     }
 }

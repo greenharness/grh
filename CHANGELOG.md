@@ -10,7 +10,8 @@ section is missing here.
 - `grh audit` no longer reads the retired `@duro-app/` scope: a repository
   whose `package.json` depends only on `@duro-app/*` audits as "no greenrack
   dependency", and the `design` part is not recommended for it. The
-  `@greenharness/greenrack-*` rule is unchanged.
+  `@greenharness/greenrack-*` rule is unchanged. `grh audit --json` no longer
+  emits the `dep:@duro-app/` key in `signals`.
 
 ## v0.14.5
 
