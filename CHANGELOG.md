@@ -5,6 +5,11 @@ section is missing here.
 
 ## Unreleased
 
+- `grh audit` no longer reads the retired `@duro-app/` scope: a repository
+  whose `package.json` depends only on `@duro-app/*` audits as "no greenrack
+  dependency", and the `design` part is not recommended for it. The
+  `@greenharness/greenrack-*` rule is unchanged.
+
 ## v0.14.5
 
 - Pins skills 0.22.0 (was 0.21.0). The review agents keep `model: inherit`
