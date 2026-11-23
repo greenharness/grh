@@ -5,6 +5,8 @@ section is missing here.
 
 ## Unreleased
 
+## v0.15.0
+
 - `grh audit` no longer reads the retired `@duro-app/` scope: a repository
   whose `package.json` depends only on `@duro-app/*` audits as "no greenrack
   dependency", and the `design` part is not recommended for it. The
