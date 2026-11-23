@@ -300,11 +300,6 @@ verdict = "recommend"
 reason = "package.json depends on @greenharness/greenrack-*"
 
 [[part.recommend]]
-when = ["dep:@duro-app/"]
-verdict = "recommend"
-reason = "package.json depends on @duro-app/ (the old scope)"
-
-[[part.recommend]]
 when = []
 verdict = "not useful"
 reason = "no greenrack dependency"

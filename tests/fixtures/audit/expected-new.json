@@ -7,10 +7,6 @@
     "hooks": [],
     "install": "grh install greengate greenbelay conform"
   },
-  "both_scopes": {
-    "hooks": [],
-    "install": "grh install greengate greenbelay design"
-  },
   "ci_attest": {
     "hooks": [],
     "install": "grh install greengate greenbelay"
@@ -26,10 +22,6 @@
   "claude_setup": {
     "hooks": [],
     "install": "grh install greengate greenbelay workflow"
-  },
-  "duro": {
-    "hooks": [],
-    "install": "grh install greengate greenbelay design"
   },
   "empty": {
     "hooks": [],

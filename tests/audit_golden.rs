@@ -111,35 +111,11 @@ const FIXTURES: &[Fixture] = &[
         env: &[],
     },
     Fixture {
-        name: "duro",
-        files: &[
-            (
-                "package.json",
-                "{\"dependencies\":{\"@duro-app/ui\":\"^6\"}}\n",
-            ),
-            ("src/app.tsx", "export {}\n"),
-        ],
-        hooks_path: None,
-        env: &[],
-    },
-    Fixture {
         name: "greenrack",
         files: &[
             (
                 "package.json",
                 "{\"dependencies\":{\"@greenharness/greenrack-ui\":\"^7\"}}\n",
-            ),
-            ("src/app.tsx", "export {}\n"),
-        ],
-        hooks_path: None,
-        env: &[],
-    },
-    Fixture {
-        name: "both_scopes",
-        files: &[
-            (
-                "package.json",
-                "{\"dependencies\":{\"@duro-app/ui\":\"^6\",\"@greenharness/greenrack-ui\":\"^7\"}}\n",
             ),
             ("src/app.tsx", "export {}\n"),
         ],
@@ -421,33 +397,38 @@ fn the_text_audit_names_a_recommended_experiment_after_the_install_line() {
 }
 
 #[test]
-fn both_dependency_scopes_are_detected_and_the_new_one_names_the_reason() {
+fn the_retired_scope_is_not_detected_and_the_greenrack_one_names_the_reason() {
     let bin = Path::new(env!("CARGO_BIN_EXE_grh"));
+    // Not in FIXTURES: its 0.2.0 golden recommended `design`, which this release drops.
+    let retired_scope_only = Fixture {
+        name: "retired_scope_only",
+        files: &[
+            (
+                "package.json",
+                "{\"dependencies\":{\"@duro-app/ui\":\"^6\"}}\n",
+            ),
+            ("src/app.tsx", "export {}\n"),
+        ],
+        hooks_path: None,
+        env: &[],
+    };
+    let by_name = |name: &str| FIXTURES.iter().find(|fx| fx.name == name).expect("fixture");
     let cases = [
-        ("empty", false, false, "no greenrack dependency"),
+        (by_name("empty"), false, "no greenrack dependency"),
+        (&retired_scope_only, false, "no greenrack dependency"),
         (
-            "duro",
-            true,
-            false,
-            "package.json depends on @duro-app/ (the old scope)",
-        ),
-        (
-            "greenrack",
-            false,
-            true,
-            "package.json depends on @greenharness/greenrack-*",
-        ),
-        (
-            "both_scopes",
-            true,
+            by_name("greenrack"),
             true,
             "package.json depends on @greenharness/greenrack-*",
         ),
     ];
-    for (name, old_scope, new_scope, reason) in cases {
-        let fx = FIXTURES.iter().find(|fx| fx.name == name).expect("fixture");
+    for (fx, new_scope, reason) in cases {
+        let name = fx.name;
         let doc = audit(bin, fx);
-        assert_eq!(doc["signals"]["dep:@duro-app/"], old_scope, "{name}: old");
+        assert!(
+            doc["signals"]["dep:@duro-app/"].is_null(),
+            "{name}: the retired scope is no signal"
+        );
         assert_eq!(
             doc["signals"]["dep:@greenharness/greenrack-"], new_scope,
             "{name}: new"
@@ -459,5 +440,10 @@ fn both_dependency_scopes_are_detected_and_the_new_one_names_the_reason() {
             .find(|r| r["part"] == "design")
             .unwrap();
         assert_eq!(row["reason"], reason, "{name}: reason");
+        assert_eq!(
+            row["verdict"] == "recommend",
+            new_scope,
+            "{name}: design is recommended only on the new scope"
+        );
     }
 }
