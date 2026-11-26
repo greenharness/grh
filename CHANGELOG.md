@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+## v0.16.0
+
+- The `decisions` part installs greentopo 2.0.0 from `greenharness/greentopo`
+  (was aval 1.12.0 from `fredericrous/aval`), and the `conform` part installs
+  greenspotter 0.20.1 from `greenharness/greenspotter` (was adr-lint 0.17.0).
+  `grh audit` reports the `greentopo` binary and its MCP server, with no
+  fallback to the old names (ADR-0072, ADR-0074).
+
 ## v0.15.0
 
 - `grh audit` no longer reads the retired `@duro-app/` scope: a repository
