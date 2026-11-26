@@ -5,6 +5,14 @@ section is missing here.
 
 ## Unreleased
 
+## v0.16.1
+
+- Pins skills 0.24.0 (was 0.22.0). worktree-task's Handoff gains step 0:
+  the session stops the agents, background shells and Monitors it left
+  running before it prints the clear line, since a `/clear` leaves them
+  running; the size boundary sweeps too. Skills 0.23.0 names greentopo and
+  greenspotter, the tools' new names.
+
 ## v0.16.0
 
 - The `decisions` part installs greentopo 2.0.0 from `greenharness/greentopo`
