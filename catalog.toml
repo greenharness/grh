@@ -56,21 +56,21 @@ sha256 = "d82ed3b089674c52992cba93dd148f3125fae4d8b3ceab4aa2e811fe3fa955d4"
 [[part]]
 [part.extension]
 name = "decisions"
-version = "1.12.0"
+version = "2.0.0"
 harness = ">=0.3"
 summary = "what is decided: architecture decision records, resolved"
 needs = []
 
 [part.tool]
-bin = "aval"
+bin = "greentopo"
 [part.tool.release]
-repo = "fredericrous/aval"
-version = "1.12.0"
+repo = "greenharness/greentopo"
+version = "2.0.0"
 [part.tool.release.sha256]
-aarch64-apple-darwin = "698b87990cd9519c4f97381befc43a92664cf8228ebd6e1e9d4ad0c31c987d05"
-x86_64-apple-darwin = "81c207b715637663fed2968230c4f4a4127536ab9bd9c0fb85f3eea2848b5d11"
-aarch64-unknown-linux-gnu = "01f36eedf558a092516b6dc981aabb6a0aa384584b60fac02fb46f61d69c8bad"
-x86_64-unknown-linux-gnu = "59afa75d613b7d899d86963b253df2ccd98606d5991cf49f4195b640e5feb26a"
+aarch64-apple-darwin = "30a3fae1eb59a5e5e94271950975bcabd4486d1585e5dd4621b24c6195e54013"
+x86_64-apple-darwin = "912d9de53f9ce10c7342854e18fedb12d42419273052c81eef982191a6c67557"
+aarch64-unknown-linux-gnu = "6c62826f9f0a1c7db6b4f30c73cf6198cdca609b0323ae04d446aaaf2d7d5129"
+x86_64-unknown-linux-gnu = "f1c39c749d46fd21e3c12c4aacb3153f59074eb701b3bdab370181bce25b2501"
 [part.tool.machine]
 install = ["{bin}", "mcp", "install", "--write"]
 uninstall = ["{bin}", "mcp", "uninstall", "--write"]
@@ -91,7 +91,7 @@ skills = ["relais-architecture-conflict"]
 [[part.recommend]]
 when = ["adr_folder", "machine_present"]
 verdict = "already here"
-reason = "aval is registered with Claude Code"
+reason = "greentopo is registered with Claude Code"
 
 [[part.recommend]]
 when = ["adr_folder"]
@@ -106,24 +106,24 @@ reason = "no ADR folder"
 [[part]]
 [part.extension]
 name = "conform"
-version = "0.17.0"
+version = "0.20.1"
 harness = ">=0.3"
 summary = "which decided code rules a tree breaks, by lint"
 needs = ["decisions"]
-hint = "in a repository: adr-lint sync, and for TypeScript: pnpm add -D @aval-adr/eslint-config"
-# Repo level writes nothing: `adr-lint sync` rewrites lint configs the
+hint = "in a repository: greenspotter sync, and for TypeScript: pnpm add -D @greenharness/greenspotter-eslint-config"
+# Repo level writes nothing: `greenspotter sync` rewrites lint configs the
 # repository owns, so grh prints the commands instead.
 
 [part.tool]
-bin = "adr-lint"
+bin = "greenspotter"
 [part.tool.release]
-repo = "fredericrous/adr-lint"
-version = "0.17.0"
+repo = "greenharness/greenspotter"
+version = "0.20.1"
 [part.tool.release.sha256]
-aarch64-apple-darwin = "5e8caa567fcb110d242eaad5b908f9863bad3af772dbb3e2cb017274bbc233d3"
-x86_64-apple-darwin = "e6d495d97c3f12d314b27aea57f1164d16701851ee56428369aaf2c29c786b14"
-aarch64-unknown-linux-gnu = "17282fe138c814a01b89865653ef1c309983823d220003efcf35799bff685b79"
-x86_64-unknown-linux-gnu = "3cd150e8539c733c84bb6c21092beb35700f54b5ddbc7ea1ee5b6b588b921b46"
+aarch64-apple-darwin = "2163991646d3b1243d8a695956f178c640bcbd3e658a3a6fda374b0a38235856"
+x86_64-apple-darwin = "f2815ba76bf6be244f412ea39ce1c6df272a5243b64edc8aa4029a823a089b0a"
+aarch64-unknown-linux-gnu = "e06b9bfe9332399624b08a6643d2ad3460564628137d0e8f63cd83d8c26d4442"
+x86_64-unknown-linux-gnu = "f14ec614e7304ef716b27ef8301f60d9295739e0a149399474c4f29b30a64c6b"
 
 [[part.recommend]]
 when = ["adr_folder", "language_supported"]

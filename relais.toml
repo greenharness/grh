@@ -34,7 +34,7 @@ max_agents_total = 24
 # "required" blocks runs on machines without the tool;
 # "optional" reports it missing; "off" skips it.
 [integrations]
-aval = "optional"
+greentopo = "optional"
 amont = "optional"
 amont_agent = "optional"
 

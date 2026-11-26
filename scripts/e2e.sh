@@ -134,8 +134,8 @@ if [ -n "$shims" ]; then
     printf '%s\n' "$shims"
     exit 1
 fi
-if [ -e "$repo/.claude/hooks/aval-heads.sh" ]; then
-    echo "aval-heads.sh left in the fixture repository"
+if [ -e "$repo/.claude/hooks/greentopo-heads.sh" ]; then
+    echo "greentopo-heads.sh left in the fixture repository"
     exit 1
 fi
 if ls "$CLAUDE_FAKE_STATE"/mcp.* > /dev/null 2>&1; then

@@ -25,11 +25,11 @@ lists the parts and exits 2.
 
 | Part | Tool | What it decides |
 |---|---|---|
-| decisions | aval | what is decided: architecture decision records, resolved |
+| decisions | greentopo | what is decided: architecture decision records, resolved |
 | greengate (was gate) | amont | what a commit or a push may carry: git hooks |
 | greenbelay (was greenpiste, guardrails) | greenbelay | what an agent's tool call may do: a Claude Code hook |
 | router | relais | which model runs a bounded task, verified and accounted (an experiment: never ticked for you, left out of `--all`) |
-| conform | adr-lint | which decided code rules a tree breaks, by lint (needs decisions) |
+| conform | greenspotter | which decided code rules a tree breaks, by lint (needs decisions) |
 | greensummit (was attest) | greensummit | CI skips what your laptop already checked (needs greengate) |
 | workflow | skills and agents | plans reviewed by a panel, one worktree per task (needs greenbelay and greengate) |
 | design | greenrack | the greenrack design system, themed by your tokens (extension, installed from its manifest) |

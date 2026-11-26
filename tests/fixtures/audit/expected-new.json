@@ -3,7 +3,7 @@
     "hooks": [],
     "install": "grh install greengate greenbelay decisions"
   },
-  "aval_mcp_registered": {
+  "greentopo_mcp_registered": {
     "hooks": [],
     "install": "grh install greengate greenbelay conform"
   },

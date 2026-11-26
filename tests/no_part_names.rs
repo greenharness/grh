@@ -23,6 +23,8 @@ const PARTS: &[&str] = &[
     "design",
     "amont",
     "aval",
+    "greentopo",
+    "greenspotter",
     "relais",
     "duro",
     "greenrack",
@@ -233,7 +235,7 @@ fn a_part_name_in_any_scanned_file_is_caught() {
 #[test]
 fn the_check_sees_a_part_name_in_a_literal() {
     let source =
-        "fn f() { run(\"amont\"); }\n#[cfg(test)]\nmod tests { fn g() { run(\"aval\"); } }\n";
+        "fn f() { run(\"amont\"); }\n#[cfg(test)]\nmod tests { fn g() { run(\"greentopo\"); } }\n";
     let kept = without_test_modules(source);
     let found: Vec<String> = literals(&kept);
     assert_eq!(found, vec!["amont".to_string()]);

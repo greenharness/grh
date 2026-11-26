@@ -497,7 +497,7 @@ mod tests {
         let dir = tmp.path().join("grh");
         let kinds = vec![
             Kind::BinaryPlaced {
-                path: "/b/aval".into(),
+                path: "/b/greentopo".into(),
                 sha256: "01".into(),
                 keep_binary: None,
             },
@@ -509,8 +509,8 @@ mod tests {
                 sha256: "03".into(),
             },
             Kind::ToolInstall {
-                argv: vec!["aval".into(), "mcp".into()],
-                undo_argv: vec!["aval".into(), "unmcp".into()],
+                argv: vec!["greentopo".into(), "mcp".into()],
+                undo_argv: vec!["greentopo".into(), "unmcp".into()],
                 status: Some(RecordedStatus {
                     args: vec!["list".into()],
                     exit: None,

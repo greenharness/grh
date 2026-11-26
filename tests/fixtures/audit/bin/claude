@@ -1,7 +1,7 @@
 #!/bin/sh
-# A stub host: `mcp get aval` exits 0 when STUB_AVAL_MCP=1, else 1 (the same
-# answer the stub aval gives, so the two probes can be compared).
+# A stub host: `mcp get greentopo` exits 0 when STUB_TOPO_MCP=1, else 1 (the same
+# answer the stub greentopo gives, so the two probes can be compared).
 case "$*" in
-  "mcp get aval") [ "${STUB_AVAL_MCP:-0}" = 1 ] ;;
+  "mcp get greentopo") [ "${STUB_TOPO_MCP:-0}" = 1 ] ;;
   *) exit 0 ;;
 esac
