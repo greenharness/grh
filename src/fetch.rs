@@ -714,31 +714,37 @@ mod tests {
     #[test]
     fn url_shape() {
         assert_eq!(
-            binary_url("https://github.com/", "o/r", "aval", "1.2.3", "t"),
-            "https://github.com/o/r/releases/download/v1.2.3/aval-1.2.3-t.tar.gz"
+            binary_url("https://github.com/", "o/r", "greentopo", "1.2.3", "t"),
+            "https://github.com/o/r/releases/download/v1.2.3/greentopo-1.2.3-t.tar.gz"
         );
     }
 
     #[test]
     fn a_verified_tarball_unpacks_only_the_named_binary() {
         let tmp = tempfile::tempdir().unwrap();
-        let tgz = tarball(&[("aval-1.0.0/README", b"hi"), ("aval-1.0.0/aval", b"BIN")]);
-        let base = serve(&tmp.path().join("srv"), "o/r", "aval", &tgz);
+        let tgz = tarball(&[
+            ("greentopo-1.0.0/README", b"hi"),
+            ("greentopo-1.0.0/greentopo", b"BIN"),
+        ]);
+        let base = serve(&tmp.path().join("srv"), "o/r", "greentopo", &tgz);
         let dir = tmp.path().join("bin");
         let placed = install_binary_from(
             &base,
             "o/r",
-            "aval",
+            "greentopo",
             "1.0.0",
             "x86_64-unknown-linux-gnu",
             &sha256_hex(&tgz),
             &dir,
         )
         .unwrap();
-        assert_eq!(placed.path, dir.join("aval"));
+        assert_eq!(placed.path, dir.join("greentopo"));
         assert_eq!(placed.sha256, sha256_hex(b"BIN"));
-        assert_eq!(fs::read(dir.join("aval")).unwrap(), b"BIN");
-        let mode = fs::metadata(dir.join("aval")).unwrap().permissions().mode();
+        assert_eq!(fs::read(dir.join("greentopo")).unwrap(), b"BIN");
+        let mode = fs::metadata(dir.join("greentopo"))
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o755);
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
     }
@@ -746,13 +752,13 @@ mod tests {
     #[test]
     fn a_wrong_sha_writes_nothing() {
         let tmp = tempfile::tempdir().unwrap();
-        let tgz = tarball(&[("aval", b"BIN")]);
-        let base = serve(&tmp.path().join("srv"), "o/r", "aval", &tgz);
+        let tgz = tarball(&[("greentopo", b"BIN")]);
+        let base = serve(&tmp.path().join("srv"), "o/r", "greentopo", &tgz);
         let dir = tmp.path().join("bin");
         let outcome = install_binary_from(
             &base,
             "o/r",
-            "aval",
+            "greentopo",
             "1.0.0",
             "x86_64-unknown-linux-gnu",
             &"0".repeat(64),
@@ -769,19 +775,19 @@ mod tests {
     fn a_tarball_without_the_binary_is_an_error() {
         let tmp = tempfile::tempdir().unwrap();
         let tgz = tarball(&[("other", b"x")]);
-        let base = serve(&tmp.path().join("srv"), "o/r", "aval", &tgz);
+        let base = serve(&tmp.path().join("srv"), "o/r", "greentopo", &tgz);
         let dir = tmp.path().join("bin");
         let outcome = install_binary_from(
             &base,
             "o/r",
-            "aval",
+            "greentopo",
             "1.0.0",
             "x86_64-unknown-linux-gnu",
             &sha256_hex(&tgz),
             &dir,
         );
         assert!(matches!(outcome, Err(Exit::Failed(_))));
-        assert!(!dir.join("aval").exists());
+        assert!(!dir.join("greentopo").exists());
     }
 
     #[test]

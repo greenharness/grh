@@ -123,13 +123,13 @@ const FIXTURES: &[Fixture] = &[
         env: &[],
     },
     Fixture {
-        name: "aval_mcp_registered",
+        name: "greentopo_mcp_registered",
         files: &[
             ("docs/decisions/0001.md", "# d\n"),
             ("src/main.rs", "fn main() {}\n"),
         ],
         hooks_path: None,
-        env: &[("STUB_AVAL_MCP", "1")],
+        env: &[("STUB_TOPO_MCP", "1")],
     },
 ];
 

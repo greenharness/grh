@@ -37,12 +37,12 @@ if [ "$FAKE_FAIL_UNINSTALL" = "$name" ]; then
 fi
 case "$name:$*" in
   *:--version) echo "$name 1.0.0";;
-  aval:"mcp install --check") [ -f "$st.machine" ] && exit 0; exit 1;;
-  aval:"hook uninstall --check") [ -f "$st.repo" ] && exit 1; exit 0;;
-  aval:"mcp install --write") touch "$st.machine";;
-  aval:"mcp uninstall --write") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.machine";;
-  aval:"hook install") touch "$st.repo";;
-  aval:"hook uninstall --write") rm -f "$st.repo";;
+  greentopo:"mcp install --check") [ -f "$st.machine" ] && exit 0; exit 1;;
+  greentopo:"hook uninstall --check") [ -f "$st.repo" ] && exit 1; exit 0;;
+  greentopo:"mcp install --write") touch "$st.machine";;
+  greentopo:"mcp uninstall --write") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.machine";;
+  greentopo:"hook install") touch "$st.repo";;
+  greentopo:"hook uninstall --write") rm -f "$st.repo";;
   amont:"list --json"|greengate:"list --json") tpl="{\"state\":\"${FAKE_TEMPLATE:-absent}\",\"shims\":[{\"binary\":\"$FAKE_TEMPLATE_BIN\"}]}"; [ -n "$FAKE_TEMPLATE_RAW" ] && tpl=$FAKE_TEMPLATE_RAW; echo "{\"installed\":{\"state\":\"$(state repo)\"},\"template_dir\":$tpl}";;
   amont:init) touch "$st.repo";;
   amont:"uninstall --repo") [ "$FAKE_STICKY" = "$name" ] || rm -f "$st.repo";;
@@ -116,7 +116,7 @@ impl Fx {
         for (part, bin, extra) in [
             (
                 "decisions",
-                "aval",
+                "greentopo",
                 level(
                     "machine",
                     "[\"{bin}\", \"mcp\", \"install\", \"--write\"]",
@@ -533,7 +533,7 @@ fn all_with_yes_installs_every_published_part() {
     let fx = Fx::new();
     let output = fx.grh("work", &[], &["install", "--all", "--yes"]);
     assert_eq!(code(&output), 0, "{}", err(&output));
-    assert_eq!(fx.files("bin"), ["amont", "amont-agent", "aval"]);
+    assert_eq!(fx.files("bin"), ["amont", "amont-agent", "greentopo"]);
     let receipt = fx.receipt();
     for part in ["decisions", "gate", "guardrails"] {
         assert!(
@@ -1514,7 +1514,7 @@ fn the_first_locked_command_migrates_the_receipt_once_and_keeps_the_original() {
 #[test]
 fn a_version_1_receipt_with_no_alias_is_still_raised_to_version_2() {
     let fx = alias_fx();
-    let bin = fx.p("bin/aval");
+    let bin = fx.p("bin/greentopo");
     executable(&bin, FAKE);
     seed_receipt(
         &fx,
