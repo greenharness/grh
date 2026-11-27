@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.16.2
+
+- Pins skills 0.25.0 (was 0.24.0). worktree-task's "File the inbox" step
+  numbers a filed ticket from the highest id on fetched `origin/main` plus
+  one, and renumbers on a refused or warned number before the push.
+
 ## v0.16.1
 
 - Pins skills 0.24.0 (was 0.22.0). worktree-task's Handoff gains step 0:
