@@ -5,6 +5,12 @@ section is missing here.
 
 ## Unreleased
 
+## v0.16.3
+
+- Pins skills 0.26.0 (was 0.25.0). worktree-task now says a rebase starts no
+  new implementation review: the push decides whether the earlier pass
+  carries, and a refusal naming the review sends the session back to it.
+
 ## v0.16.2
 
 - Pins skills 0.25.0 (was 0.24.0). worktree-task's "File the inbox" step
